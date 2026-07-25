@@ -1,0 +1,22 @@
+{
+  "_comment": "Cognee agent-agnostic Memory MCP. Prefer the HTTP entry: it works with ANY MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, ...) by pointing at one URL, no local process needed. The stdio entry is a fallback for clients that spawn a subprocess instead of connecting to a URL; it requires the local .venv on the same machine.",
+
+  "mcpServers": {
+    "cognee-memory": {
+      "type": "http",
+      "url": "http://localhost:9481/mcp"
+    },
+
+    "cognee-memory-stdio": {
+      "command": "/home/user/builds/cognee/.venv/bin/python",
+      "args": [
+        "/home/himanshu/builds/cognee/cognee_mcp_server.py",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "COGNEE_API_URL": "http://localhost:9480"
+      }
+    }
+  }
+}

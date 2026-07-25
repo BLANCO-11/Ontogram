@@ -1,0 +1,30 @@
+services:
+  cognee_hybrid_service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cognee_hybrid_service
+    restart: unless-stopped
+    ports:
+      - "9480:9480" # REST API Backend & Swagger Docs & Knowledge Graph Visualizer
+      - "9481:9481" # Memory MCP Server (streamable-http) -> http://localhost:9481/mcp
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - COGNEE_BACKEND_PORT=9480
+      - COGNEE_MCP_PORT=9481
+      - COGNEE_MCP_TRANSPORT=http
+      - COGNEE_API_URL=http://localhost:9480
+      # Persist ALL Cognee storage on the named volume. Without these, Cognee
+      # writes its databases inside the image (ephemeral) and every rebuild
+      # wipes all memory.
+      - DATA_ROOT_DIRECTORY=/root/.cognee/data_storage
+      - SYSTEM_ROOT_DIRECTORY=/root/.cognee/cognee_system
+      - CACHE_ROOT_DIRECTORY=/root/.cognee/cache
+    volumes:
+      - cognee_data:/root/.cognee
+
+volumes:
+  cognee_data:
+    name: cognee_data
