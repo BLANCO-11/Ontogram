@@ -10,8 +10,16 @@ Design: this server does NOT run Cognee in-process. It proxies to the single
 REST daemon (cognee.api.client:app on COGNEE_API_URL). Keeping exactly one
 Cognee process is what prevents SQLite/LanceDB/KuzuDB write-lock contention
 when several agents talk to memory concurrently -- the core promise of this
-service. Per-agent isolation is achieved by dataset partitioning
-(``<agent_id>_memory``), matching agent_client.py.
+service. Isolation is achieved by dataset partitioning.
+
+Scoped-memory contract (shared with the omp-deck MemoryService): memory is
+partitioned into ``deck_global_memory``, ``deck_<project-slug>_memory`` and
+``deck_<project-slug>_<session-slug>_memory`` datasets; the ``X-User-Id``
+header is ``global`` or the project slug. ``remember``/``recall`` resolve a
+(scope, project_id, session_id) triple into that naming before proxying, so
+agents and the deck agree on where a fact lands. Legacy ``<agent_id>_memory``
+partitioning is still served by ``list_agents`` but new writes use the deck
+naming above.
 
 Transports:
   * streamable-http (default) -- any agent points at http://<host>:<port>/mcp
@@ -23,13 +31,13 @@ Configuration (env vars):
   COGNEE_MCP_TRANSPORT  http | sse | stdio             (default http)
   COGNEE_MCP_HOST       bind host for http/sse         (default 0.0.0.0)
   COGNEE_MCP_PORT       bind port for http/sse         (default 9481)
-  COGNEE_DEFAULT_AGENT  fallback agent/tenant id       (default shared-team)
 """
 
 import os
+import re
 import sys
 import argparse
-from typing import Optional
+from typing import Literal, Optional
 
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -38,7 +46,6 @@ from mcp.server.fastmcp import FastMCP
 # Configuration
 # --------------------------------------------------------------------------- #
 API_URL = os.getenv("COGNEE_API_URL", "http://localhost:9480").rstrip("/")
-DEFAULT_AGENT = os.getenv("COGNEE_DEFAULT_AGENT", "shared-team")
 
 # Cognify (graph building) can take a while; recall runs an LLM completion.
 REMEMBER_SYNC_TIMEOUT = 300.0   # seconds, only used when wait=True
@@ -52,25 +59,73 @@ mcp = FastMCP(
 )
 
 
-def _dataset_for(agent_id: str) -> str:
-    return f"{agent_id}_memory"
+def _slugify(value: str) -> str:
+    """Sanitize an identifier into the deck session-slug charset.
+
+    Non-alphanumerics collapse to a single ``-`` (matches the deck's
+    ``datasetNameFor`` contract so both sides derive identical dataset names
+    from the same session id).
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-")
+    return cleaned or "unknown"
+
+
+def _resolve_dataset(
+    scope: str,
+    project_id: str | None,
+    session_id: str | None,
+) -> tuple[str, str]:
+    """Resolve (datasetName, X-User-Id) per the omp-deck scoped-memory contract.
+
+    Contract (mirrored by apps/server/src/memory/service.ts `datasetNameFor`):
+      * global  -> ``deck_global_memory``, X-User-Id ``global``
+      * project -> ``deck_<project-slug>_memory``, X-User-Id ``<project-slug>``
+      * session -> ``deck_<project-slug>_<session-slug>_memory``,
+                   X-User-Id ``<project-slug>``
+
+    Missing ids degrade leniently: a session scope without ids falls back to
+    project (then global), and a project scope without a project id lands in
+    the global dataset. Callers that want project/session memory MUST pass
+    project_id explicitly.
+    """
+    if scope == "session" and project_id and session_id:
+        return f"deck_{project_id}_{_slugify(session_id)}_memory", project_id
+    if scope == "project" and project_id:
+        return f"deck_{project_id}_memory", project_id
+    return "deck_global_memory", "global"
 
 
 # --------------------------------------------------------------------------- #
 # Tools
 # --------------------------------------------------------------------------- #
 @mcp.tool()
-async def remember(text: str, agent_id: str = DEFAULT_AGENT, wait: bool = False) -> str:
+async def remember(
+    text: str,
+    scope: Literal["global", "project", "session"] = "project",
+    project_id: str | None = None,
+    session_id: str | None = None,
+    wait: bool = False,
+) -> str:
     """Store a piece of text into long-term memory (a Cognee knowledge graph).
 
     Use this to persist facts, preferences, decisions, or context that should
-    survive across sessions and be shared or isolated per agent.
+    survive across sessions and be scoped per project (and optionally per
+    session). Dataset + X-User-Id are derived from the scope triple per the
+    omp-deck contract: ``deck_global_memory``, ``deck_<project-slug>_memory``,
+    ``deck_<project-slug>_<session-slug>_memory``.
 
     Args:
         text: The information to remember (a sentence, note, or paragraph).
-        agent_id: Memory partition / tenant. Each agent gets an isolated
-            dataset named ``<agent_id>_memory``. Use "shared-team" for memory
-            shared across all agents. Defaults to the configured default agent.
+        scope: Memory partition scope: "global" (shared across all projects),
+            "project" (one dataset per project slug), or "session" (a
+            per-session dataset inside a project). Defaults to "project"; when
+            project_id is absent the memory degrades to the global dataset —
+            agents storing project memory MUST pass project_id explicitly.
+        project_id: Project slug owning this memory. Required for scope
+            "project"; also required together with session_id for scope
+            "session".
+        session_id: Deck session id; sanitized into a session slug for the
+            dataset name. Only used with scope "session".
         wait: If True, block until the knowledge graph is built (slower, up to
             a few minutes). If False (default), ingestion runs in the
             background and this returns immediately.
@@ -78,13 +133,13 @@ async def remember(text: str, agent_id: str = DEFAULT_AGENT, wait: bool = False)
     if not text or not text.strip():
         return "❌ Nothing to remember: `text` was empty."
 
-    dataset = _dataset_for(agent_id)
+    dataset, user_id = _resolve_dataset(scope, project_id, session_id)
     files = {"data": ("memory.txt", text.encode("utf-8"), "text/plain")}
     data = {
         "datasetName": dataset,
         "run_in_background": "false" if wait else "true",
     }
-    headers = {"X-User-Id": agent_id}
+    headers = {"X-User-Id": user_id}
     timeout = REMEMBER_SYNC_TIMEOUT if wait else REMEMBER_ASYNC_TIMEOUT
 
     try:
@@ -100,29 +155,41 @@ async def remember(text: str, agent_id: str = DEFAULT_AGENT, wait: bool = False)
 
     if resp.status_code in (200, 201, 202):
         mode = "stored and indexed" if wait else "accepted (indexing in background)"
-        return f"✓ Memory {mode} for agent '{agent_id}' (dataset '{dataset}')."
+        return f"✓ Memory {mode} for scope '{scope}' (dataset '{dataset}')."
     return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
 
 
 @mcp.tool()
-async def recall(query: str, agent_id: str = DEFAULT_AGENT) -> str:
+async def recall(
+    query: str,
+    scope: Literal["global", "project", "session"] = "project",
+    project_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
     """Recall relevant information from long-term memory for a natural-language query.
 
-    Searches the agent's Cognee knowledge graph and returns a synthesized answer
-    grounded in previously remembered facts.
+    Searches the scoped Cognee knowledge graph and returns a synthesized answer
+    grounded in previously remembered facts. The scope triple resolves to the
+    same dataset naming as ``remember`` (omp-deck contract) — pass the same
+    scope/project_id/session_id you used when storing.
 
     Args:
         query: The natural-language question or lookup.
-        agent_id: Memory partition / tenant to search (dataset
-            ``<agent_id>_memory``). Use "shared-team" for shared memory.
-            Defaults to the configured default agent.
+        scope: Memory partition scope: "global", "project", or "session".
+            Defaults to "project"; without project_id the recall degrades to
+            the global dataset.
+        project_id: Project slug whose memory should be searched. Required for
+            scope "project"; also required together with session_id for scope
+            "session".
+        session_id: Deck session id (sanitized into a session slug for the
+            dataset name). Only used with scope "session".
     """
     if not query or not query.strip():
         return "❌ Empty query."
 
-    dataset = _dataset_for(agent_id)
+    dataset, user_id = _resolve_dataset(scope, project_id, session_id)
     payload = {"query": query, "datasetName": dataset}
-    headers = {"X-User-Id": agent_id}
+    headers = {"X-User-Id": user_id}
 
     try:
         async with httpx.AsyncClient(timeout=RECALL_TIMEOUT) as client:
@@ -150,8 +217,28 @@ async def recall(query: str, agent_id: str = DEFAULT_AGENT) -> str:
             texts.append(t)
 
     if not texts:
-        return f"(No relevant memories found for agent '{agent_id}'.)"
+        return f"(No relevant memories found for scope '{scope}' dataset '{dataset}'.)"
     return "\n\n".join(texts)
+
+
+@mcp.tool()
+async def list_datasets() -> str:
+    """List every dataset known to the Cognee memory backend.
+
+    Passthrough of ``GET {COGNEE_API_URL}/api/v1/datasets``. Use this to
+    discover which scoped datasets (``deck_global_memory``,
+    ``deck_<project-slug>_memory``, ``deck_<project-slug>_<session-slug>_memory``)
+    currently exist before recalling.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(f"{API_URL}/api/v1/datasets")
+    except httpx.RequestError as exc:
+        return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
+
+    if resp.status_code != 200:
+        return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
+    return resp.text
 
 
 @mcp.tool()
