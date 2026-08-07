@@ -40,23 +40,35 @@ import argparse
 from typing import Literal, Optional
 
 import httpx
-from mcp.server.fastmcp import FastMCP
+
+try:
+    # mcp < 2: FastMCP ships inside the mcp package (constructor takes host/port).
+    from mcp.server.fastmcp import FastMCP
+
+    _FASTMCP_FLAVOR = "mcp"
+except ImportError:
+    # mcp >= 2: FastMCP moved to the standalone `fastmcp` package. The API is
+    # the same except the constructor dropped host/port — they move to run().
+    from fastmcp import FastMCP
+
+    _FASTMCP_FLAVOR = "fastmcp"
 
 # --------------------------------------------------------------------------- #
 # Configuration
 # --------------------------------------------------------------------------- #
 API_URL = os.getenv("COGNEE_API_URL", "http://localhost:9480").rstrip("/")
+MCP_HOST = os.getenv("COGNEE_MCP_HOST", "0.0.0.0")
+MCP_PORT = int(os.getenv("COGNEE_MCP_PORT", "9481"))
 
 # Cognify (graph building) can take a while; recall runs an LLM completion.
 REMEMBER_SYNC_TIMEOUT = 300.0   # seconds, only used when wait=True
 REMEMBER_ASYNC_TIMEOUT = 30.0   # background ingestion returns fast
 RECALL_TIMEOUT = 120.0
 
-mcp = FastMCP(
-    "cognee-memory",
-    host=os.getenv("COGNEE_MCP_HOST", "0.0.0.0"),
-    port=int(os.getenv("COGNEE_MCP_PORT", "9481")),
-)
+if _FASTMCP_FLAVOR == "mcp":
+    mcp = FastMCP("cognee-memory", host=MCP_HOST, port=MCP_PORT)
+else:
+    mcp = FastMCP("cognee-memory")
 
 
 def _slugify(value: str) -> str:
@@ -291,23 +303,30 @@ def main() -> None:
         transport = "streamable-http"
         print(
             f"🧠 Cognee Memory MCP (streamable-http) on "
-            f"http://{mcp.settings.host}:{mcp.settings.port}/mcp  →  backend {API_URL}",
+            f"http://{MCP_HOST}:{MCP_PORT}/mcp  →  backend {API_URL}",
             file=sys.stderr,
             flush=True,
         )
+        if _FASTMCP_FLAVOR == "fastmcp":
+            mcp.run(transport=transport, host=MCP_HOST, port=MCP_PORT)
+        else:
+            mcp.run(transport=transport)
     elif args.transport == "sse":
         transport = "sse"
         print(
             f"🧠 Cognee Memory MCP (sse) on "
-            f"http://{mcp.settings.host}:{mcp.settings.port}/sse  →  backend {API_URL}",
+            f"http://{MCP_HOST}:{MCP_PORT}/sse  →  backend {API_URL}",
             file=sys.stderr,
             flush=True,
         )
+        if _FASTMCP_FLAVOR == "fastmcp":
+            mcp.run(transport=transport, host=MCP_HOST, port=MCP_PORT)
+        else:
+            mcp.run(transport=transport)
     else:
         transport = "stdio"
         print(f"🧠 Cognee Memory MCP (stdio)  →  backend {API_URL}", file=sys.stderr, flush=True)
-
-    mcp.run(transport=transport)
+        mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
