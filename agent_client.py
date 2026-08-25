@@ -10,11 +10,13 @@ Dataset naming:
     deck_<project>_<session>_memory
 """
 
+import asyncio
 import re
 import sys
 import argparse
-import requests
 from typing import Optional
+
+from ontogram_backend import create_backend, BackendError
 
 DEFAULT_API_URL = "http://localhost:9480"
 
@@ -40,30 +42,21 @@ def remember(text: str, user_id: str = "shared-team", dataset_name: Optional[str
     else:
         target_dataset, effective_user = resolve_dataset(scope, project_id, session_id, user_id)
     print(f"[{effective_user}] Storing memory into dataset '{target_dataset}' (Async Background: {async_bg})...")
-    url = f"{api_url.rstrip('/')}/api/v1/remember"
-    headers = {"X-User-Id": effective_user}
-    
-    files = {
-        "data": ("memory.txt", text.encode("utf-8"), "text/plain")
-    }
-    data = {
-        "datasetName": target_dataset,
-        "run_in_background": "true" if async_bg else "false"
-    }
-    
-    # Synchronous cognify (graph building) can take minutes; background returns fast.
-    timeout = 30 if async_bg else 300
+
+    async def run():
+        backend = await create_backend(base_url=api_url)
+        return await backend.remember(text, target_dataset, effective_user, background=async_bg)
+
     try:
-        resp = requests.post(url, files=files, data=data, headers=headers, timeout=timeout)
-        if resp.status_code in (200, 201, 202):
-            print(f"✓ [{effective_user}] Memory accepted successfully in dataset '{target_dataset}'.")
-            return True
-        else:
-            print(f"❌ [{effective_user}] HTTP {resp.status_code}: {resp.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Connection error: {e}")
+        result = asyncio.run(run())
+    except BackendError as e:
+        print(f"❌ [{effective_user}] Connection error: {e}")
         return False
+    if result.ok:
+        print(f"✓ [{effective_user}] Memory accepted successfully in dataset '{target_dataset}'.")
+        return True
+    print(f"❌ [{effective_user}] HTTP {result.status_code}: {result.detail}")
+    return False
 
 def recall(query: str, user_id: str = "shared-team", dataset_name: Optional[str] = None, api_url: str = DEFAULT_API_URL, scope: Optional[str] = None, project_id: Optional[str] = None, session_id: Optional[str] = None) -> Optional[str]:
     """Recall information/context from Cognee Knowledge Graph."""
@@ -72,25 +65,20 @@ def recall(query: str, user_id: str = "shared-team", dataset_name: Optional[str]
     else:
         target_dataset, effective_user = resolve_dataset(scope, project_id, session_id, user_id)
     print(f"[{effective_user}] Recalling memory from dataset '{target_dataset}' for query: '{query}'...")
-    url = f"{api_url.rstrip('/')}/api/v1/recall"
-    headers = {"X-User-Id": effective_user}
-    payload = {
-        "query": query,
-        "datasetName": target_dataset
-    }
-    
+
+    async def run():
+        backend = await create_backend(base_url=api_url)
+        return await backend.recall(query, target_dataset, effective_user)
+
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=60)
-        if resp.status_code == 200:
-            result = resp.json()
-            print(f"✓ [{effective_user}] Recall results retrieved.")
-            return str(result)
-        else:
-            print(f"❌ [{effective_user}] HTTP {resp.status_code}: {resp.text}")
-            return None
-    except Exception as e:
-        print(f"❌ Connection error: {e}")
+        hits = asyncio.run(run())
+    except BackendError as e:
+        print(f"❌ [{effective_user}] Connection error: {e}")
         return None
+    print(f"✓ [{effective_user}] Recall results retrieved.")
+    if not hits:
+        return ""
+    return "\n\n".join(h.text for h in hits)
 
 def main():
     parser = argparse.ArgumentParser(description="Cognee Agent Client Helper")

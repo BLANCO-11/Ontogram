@@ -49,6 +49,8 @@ from typing import Literal, Optional
 
 import httpx
 
+from ontogram_backend import BackendError
+
 try:
     # mcp < 2: FastMCP ships inside the mcp package (constructor takes host/port).
     from mcp.server.fastmcp import FastMCP
@@ -121,6 +123,18 @@ JOBS_KEEP_PER_DATASET = 20
 
 _JOBS: dict[str, list[dict]] = {}
 
+_backend: Optional[object] = None
+
+
+async def _get_backend():
+    """Lazily construct (once) the MemoryBackend for this bridge process."""
+    global _backend
+    if _backend is None:
+        from ontogram_backend import create_backend
+        _backend = await create_backend(API_URL)
+        print(f"🔌 Ontogram backend dialect: {_backend.dialect} → {API_URL}", file=sys.stderr, flush=True)
+    return _backend
+
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
@@ -148,23 +162,16 @@ def _update_job(dataset: str, job_id: str, state: str, detail: str = "") -> None
             return
 
 
-async def _fetch_dataset_names() -> Optional[set[str]]:
-    """Return the set of dataset names known to the daemon, or None if unreachable."""
+async def _fetch_dataset_names(user_id: str = "global") -> Optional[set[str]]:
+    """Return the set of dataset names owned by an identity, or None if unreachable."""
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{API_URL}/api/v1/datasets")
-    except httpx.RequestError:
+        backend = await _get_backend()
+        return {i.name for i in await backend.list_datasets(user_id=user_id)}
+    except Exception:
         return None
-    if resp.status_code != 200:
-        return None
-    try:
-        datasets = resp.json()
-    except ValueError:
-        return None
-    return {d.get("name") for d in datasets if isinstance(d, dict) and d.get("name")}
 
 
-async def _track_ingestion(dataset: str, job_id: str, existed_before: bool) -> None:
+async def _track_ingestion(dataset: str, job_id: str, existed_before: bool, user_id: str = "global") -> None:
     if existed_before:
         # Dataset already visible before this write; its appearance cannot be
         # used as a completion signal without touching Cognee core. Be honest.
@@ -176,7 +183,7 @@ async def _track_ingestion(dataset: str, job_id: str, existed_before: bool) -> N
     deadline = time.monotonic() + JOB_POLL_TIMEOUT
     while time.monotonic() < deadline:
         await asyncio.sleep(JOB_POLL_INTERVAL)
-        names = await _fetch_dataset_names()
+        names = await _fetch_dataset_names(user_id)
         if names is None:
             # Transient backend hiccup vs real failure: keep polling until timeout.
             continue
@@ -273,38 +280,25 @@ async def remember(
     eff_project, eff_session, degraded = _resolve_scope_args(scope, project_id, session_id)
     dataset, user_id = _resolve_dataset(scope, eff_project, eff_session)
 
-    existed_before = dataset in (await _fetch_dataset_names() or set())
+    existed_before = dataset in (await _fetch_dataset_names(user_id) or set())
 
-    files = {"data": ("memory.txt", text.encode("utf-8"), "text/plain")}
-    data = {
-        "datasetName": dataset,
-        "run_in_background": "false" if wait else "true",
-    }
-    headers = {"X-User-Id": user_id}
-    timeout = REMEMBER_SYNC_TIMEOUT if wait else REMEMBER_ASYNC_TIMEOUT
-
+    backend = await _get_backend()
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                f"{API_URL}/api/v1/remember",
-                files=files,
-                data=data,
-                headers=headers,
-            )
-    except httpx.RequestError as exc:
+        result = await backend.remember(text, dataset, user_id, background=not wait)
+    except BackendError as exc:
         return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
 
-    if resp.status_code in (200, 201, 202):
+    if result.ok:
         if wait:
             _record_job(dataset, "ready", "synchronous ingestion completed")
             mode = "stored and indexed"
         else:
             entry = _record_job(dataset, "indexing", "accepted by daemon; cognify running in background")
-            asyncio.create_task(_track_ingestion(dataset, entry["job_id"], existed_before))
+            asyncio.create_task(_track_ingestion(dataset, entry["job_id"], existed_before, user_id))
             mode = f"accepted (indexing in background; job {entry['job_id']} — check with remember_status)"
         note = _DEGRADE_NOTE if degraded else ""
         return f"{note}✓ Memory {mode} for scope '{scope}' (dataset '{dataset}')."
-    return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
+    return f"❌ Memory backend returned HTTP {result.status_code}: {result.detail}"
 
 
 @mcp.tool()
@@ -337,38 +331,17 @@ async def recall(
 
     eff_project, eff_session, degraded = _resolve_scope_args(scope, project_id, session_id)
     dataset, user_id = _resolve_dataset(scope, eff_project, eff_session)
-    payload = {"query": query, "datasetName": dataset}
-    headers = {"X-User-Id": user_id}
 
+    backend = await _get_backend()
     try:
-        async with httpx.AsyncClient(timeout=RECALL_TIMEOUT) as client:
-            resp = await client.post(
-                f"{API_URL}/api/v1/recall",
-                json=payload,
-                headers=headers,
-            )
-    except httpx.RequestError as exc:
-        return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
+        hits = await backend.recall(query, dataset, user_id)
+    except BackendError as exc:
+        return f"❌ Memory backend error: {exc}"
 
-    if resp.status_code != 200:
-        return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
-
-    try:
-        results = resp.json()
-    except ValueError:
-        return f"❌ Unexpected non-JSON response: {resp.text[:500]}"
-
-    # Response is a list of recall results; surface the readable text.
-    texts = []
-    for item in results if isinstance(results, list) else []:
-        t = (item.get("text") or "").strip() if isinstance(item, dict) else ""
-        if t:
-            texts.append(t)
-
-    if not texts:
+    if not hits:
         note = _DEGRADE_NOTE if degraded else ""
         return f"{note}(No relevant memories found for scope '{scope}' dataset '{dataset}'.)"
-    answer = "\n\n".join(texts)
+    answer = "\n\n".join(h.text for h in hits)
     if degraded:
         answer = (
             "⚠️ Served from the GLOBAL dataset — no project boundary was "
@@ -449,50 +422,32 @@ async def forget(
 
     dataset, user_id = _resolve_dataset(scope, eff_project, eff_session)
 
+    backend = await _get_backend()
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            listing = await client.get(f"{API_URL}/api/v1/datasets")
-            if listing.status_code != 200:
-                return f"❌ Memory backend returned HTTP {listing.status_code}: {listing.text[:500]}"
-            try:
-                datasets = listing.json()
-            except ValueError:
-                return f"❌ Unexpected non-JSON response: {listing.text[:500]}"
-
-            target = next(
-                (d for d in datasets if isinstance(d, dict) and d.get("name") == dataset),
-                None,
-            )
-            if target is None or "id" not in target:
-                return f"(Nothing to forget: no dataset named '{dataset}' exists.)"
-
-            resp = await client.delete(f"{API_URL}/api/v1/datasets/{target['id']}")
-    except httpx.RequestError as exc:
+        deleted = await backend.delete_dataset(dataset, user_id=user_id)
+    except BackendError as exc:
         return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
 
-    if resp.status_code in (200, 202, 204):
+    if deleted:
         return f"✓ Forgot dataset '{dataset}' ({scope} scope). All memories in it are gone."
-    return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
+    return f"(Nothing to forget: no dataset named '{dataset}' exists.)"
 
 
 @mcp.tool()
 async def list_datasets() -> str:
     """List every dataset known to the Cognee memory backend.
 
-    Passthrough of ``GET {COGNEE_API_URL}/api/v1/datasets``. Use this to
-    discover which scoped datasets (``deck_global_memory``,
+    Use this to discover which scoped datasets (``deck_global_memory``,
     ``deck_<project-slug>_memory``, ``deck_<project-slug>_<session-slug>_memory``)
     currently exist before recalling.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(f"{API_URL}/api/v1/datasets")
-    except httpx.RequestError as exc:
+        backend = await _get_backend()
+        infos = await backend.list_datasets()
+    except BackendError as exc:
         return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
-
-    if resp.status_code != 200:
-        return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
-    return resp.text
+    import json as _json
+    return _json.dumps([{"id": i.id, "name": i.name} for i in infos])
 
 
 @mcp.tool()
@@ -505,27 +460,16 @@ async def list_agents() -> str:
     ``<agent_id>_memory`` partitions from before scoping was introduced.
     """
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(f"{API_URL}/api/v1/datasets")
-    except httpx.RequestError as exc:
+        backend = await _get_backend()
+        names = [i.name for i in await backend.list_datasets()]
+    except BackendError as exc:
         return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
-
-    if resp.status_code != 200:
-        return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
-
-    try:
-        datasets = resp.json()
-    except ValueError:
-        return f"❌ Unexpected non-JSON response: {resp.text[:500]}"
 
     global_ds: list[str] = []
     projects: dict[str, list[str]] = {}
     legacy: list[str] = []
 
-    for d in datasets if isinstance(datasets, list) else []:
-        name = d.get("name") if isinstance(d, dict) else None
-        if not name:
-            continue
+    for name in names:
         if name == "deck_global_memory":
             global_ds.append(name)
         elif name.startswith("deck_") and name.endswith("_memory"):

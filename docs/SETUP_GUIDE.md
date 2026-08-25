@@ -114,6 +114,9 @@ is the file that gets committed and shared.
 | `COGNEE_SKIP_CONNECTION_TEST` | `true` | Skip startup connection timeout check |
 | `COGNEE_BIND_HOST` | `127.0.0.1` | Bind host for both processes (local mode). Set `0.0.0.0` deliberately to serve beyond localhost. |
 | `ONTOGRAM_TOKEN` | *(unset)* | Optional bearer token. When set, the MCP bridge rejects requests without `Authorization: Bearer <token>`. Strongly recommended whenever ports are exposed beyond loopback. |
+| `ENABLE_BACKEND_ACCESS_CONTROL` | `true` | **Keep on.** Enables cognee multi-tenant mode so each scope identity gets physically separate graph/vector storage — this is what enforces agent/project memory isolation. Turning it off silently degrades boundaries to labels. |
+| `ONTOGRAM_IDP_SECRET` | auto-generated | Secret used to derive per-project identity passwords (stable across restarts). Auto-generated and persisted next to cognee storage if unset; set it explicitly in multi-node setups. |
+| `DEFAULT_USER_EMAIL` / `DEFAULT_USER_PASSWORD` | cognee defaults | Credentials of the daemon's default (superuser) identity. Ontogram maps the `global` scope and all pre-ACL legacy memories to it. |
 | `ONTOGRAM_PROJECT_ID` | *(unset)* | Default project slug for the bridge's tools, so agents get correct project boundaries without passing `project_id` on every call (harnesses set this per launch). |
 | `ONTOGRAM_SESSION_ID` | *(unset)* | Default session id used when a tool call uses `scope="session"` without one. |
 | `DATA_ROOT_DIRECTORY` | `/root/.cognee/data_storage` | Ingested data location — **must** sit on the volume |
