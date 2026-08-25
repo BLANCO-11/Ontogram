@@ -61,7 +61,9 @@ Decisions locked with owner:
 | 2026-08-25 | 1 | dc78ad3 | Docs synced to scope triple; deck-aware list_agents; agent_client scope flags |
 | 2026-08-25 | 2 | 114b28a | remember_status job tracking; dataset-level forget with fallback guards; docs updated |
 | 2026-08-25 | 3 | 6f5bff4 | Loopback default + ONTOGRAM_TOKEN guard; healthcheck & startup ordering; harness integration assets |
-| 2026-08-25 | T | (this commit) | Live e2e on OpenCode Go: fixed container-internal bind (Docker forwards to eth0), stopped baking .env into image, load_env no longer overrides compose env; SETUP_GUIDE issue 5 added |
+| 2026-08-25 | T | 8e8c968 | Live e2e on OpenCode Go: fixed container-internal bind, stopped baking .env into image, load_env no longer overrides compose env; SETUP_GUIDE issue 5 added |
+| 2026-08-25 | D | 6320331 / 82e1e63 | PERFORMANCE.md (measured scaling + concurrency, six scenarios) and QUICKSTART_AGENTS.md |
+| 2026-08-25 | S | (this commit) | Auto scope resolution: ONTOGRAM_PROJECT_ID / ONTOGRAM_SESSION_ID env defaults + loud global-degradation warnings on remember/recall; verified live |
 
 ## Live test results (2026-08-25, OpenCode Go / deepseek-v4-flash)
 

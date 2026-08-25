@@ -69,6 +69,36 @@ MCP_HOST = os.getenv("COGNEE_MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("COGNEE_MCP_PORT", "9481"))
 ONTOGRAM_TOKEN = os.getenv("ONTOGRAM_TOKEN", "").strip()
 
+# Default scope resolution. Harnesses that know which project/session an agent
+# runs in (opencode, pi, Claude Code hooks, container orchestrators) set these
+# per launch; tools then resolve boundaries without the model having to guess:
+#   ONTOGRAM_PROJECT_ID   fallback project slug when the tool call omits one
+#   ONTOGRAM_SESSION_ID   fallback session id for scope="session"
+# Explicit tool arguments always win over these defaults. When neither is
+# available, project/session-scoped calls degrade to GLOBAL — loudly (the tool
+# result says so, so the model self-corrects).
+DEFAULT_PROJECT_ID = os.getenv("ONTOGRAM_PROJECT_ID", "").strip() or None
+DEFAULT_SESSION_ID = os.getenv("ONTOGRAM_SESSION_ID", "").strip() or None
+
+
+def _resolve_scope_args(
+    scope: str,
+    project_id: str | None,
+    session_id: str | None,
+) -> tuple[str | None, str | None, bool]:
+    """Apply env-default scoping. Returns (project_id, session_id, degraded)."""
+    eff_project = project_id or DEFAULT_PROJECT_ID
+    eff_session = session_id or DEFAULT_SESSION_ID
+    degraded = scope in ("project", "session") and not eff_project
+    return eff_project, eff_session, degraded
+
+
+_DEGRADE_NOTE = (
+    "⚠️ No project_id given and no ONTOGRAM_PROJECT_ID configured — "
+    "this went to the GLOBAL dataset instead of a project boundary. "
+    "Pass project_id (or have your harness set ONTOGRAM_PROJECT_ID). "
+)
+
 # Cognify (graph building) can take a while; recall runs an LLM completion.
 REMEMBER_SYNC_TIMEOUT = 300.0   # seconds, only used when wait=True
 REMEMBER_ASYNC_TIMEOUT = 30.0   # background ingestion returns fast
@@ -227,9 +257,12 @@ async def remember(
             agents storing project memory MUST pass project_id explicitly.
         project_id: Project slug owning this memory. Required for scope
             "project"; also required together with session_id for scope
-            "session".
+            "session". Falls back to the ONTOGRAM_PROJECT_ID environment
+            variable when omitted; degrades to global (with a warning) if
+            neither is available.
         session_id: Deck session id; sanitized into a session slug for the
-            dataset name. Only used with scope "session".
+            dataset name. Only used with scope "session". Falls back to the
+            ONTOGRAM_SESSION_ID environment variable when omitted.
         wait: If True, block until the knowledge graph is built (slower, up to
             a few minutes). If False (default), ingestion runs in the
             background and this returns immediately.
@@ -237,7 +270,8 @@ async def remember(
     if not text or not text.strip():
         return "❌ Nothing to remember: `text` was empty."
 
-    dataset, user_id = _resolve_dataset(scope, project_id, session_id)
+    eff_project, eff_session, degraded = _resolve_scope_args(scope, project_id, session_id)
+    dataset, user_id = _resolve_dataset(scope, eff_project, eff_session)
 
     existed_before = dataset in (await _fetch_dataset_names() or set())
 
@@ -268,7 +302,8 @@ async def remember(
             entry = _record_job(dataset, "indexing", "accepted by daemon; cognify running in background")
             asyncio.create_task(_track_ingestion(dataset, entry["job_id"], existed_before))
             mode = f"accepted (indexing in background; job {entry['job_id']} — check with remember_status)"
-        return f"✓ Memory {mode} for scope '{scope}' (dataset '{dataset}')."
+        note = _DEGRADE_NOTE if degraded else ""
+        return f"{note}✓ Memory {mode} for scope '{scope}' (dataset '{dataset}')."
     return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
 
 
@@ -300,7 +335,8 @@ async def recall(
     if not query or not query.strip():
         return "❌ Empty query."
 
-    dataset, user_id = _resolve_dataset(scope, project_id, session_id)
+    eff_project, eff_session, degraded = _resolve_scope_args(scope, project_id, session_id)
+    dataset, user_id = _resolve_dataset(scope, eff_project, eff_session)
     payload = {"query": query, "datasetName": dataset}
     headers = {"X-User-Id": user_id}
 
@@ -330,8 +366,16 @@ async def recall(
             texts.append(t)
 
     if not texts:
-        return f"(No relevant memories found for scope '{scope}' dataset '{dataset}'.)"
-    return "\n\n".join(texts)
+        note = _DEGRADE_NOTE if degraded else ""
+        return f"{note}(No relevant memories found for scope '{scope}' dataset '{dataset}'.)"
+    answer = "\n\n".join(texts)
+    if degraded:
+        answer = (
+            "⚠️ Served from the GLOBAL dataset — no project boundary was "
+            "resolvable for this recall (pass project_id or set ONTOGRAM_PROJECT_ID).\n"
+            + answer
+        )
+    return answer
 
 
 @mcp.tool()
@@ -390,16 +434,20 @@ async def forget(
         project_id: Project slug owning the memory to delete.
         session_id: Session id for scope "session".
     """
+    eff_project, eff_session, _ = _resolve_scope_args(scope, project_id, session_id)
+
     if scope == "global":
         pass  # explicit global deletion is allowed
-    elif scope == "session" and not (project_id and session_id):
+    elif scope == "session" and not (eff_project and eff_session):
         return ("❌ Refusing to degrade: session scope needs both project_id and "
-                "session_id. A wrong fallback here would delete the wrong dataset.")
-    elif scope == "project" and not project_id:
+                "session_id (directly or via ONTOGRAM_PROJECT_ID / "
+                "ONTOGRAM_SESSION_ID). A wrong fallback here would delete the "
+                "wrong dataset.")
+    elif scope == "project" and not eff_project:
         return ("❌ Refusing to degrade: project scope needs project_id. A wrong "
                 "fallback here would delete the global dataset.")
 
-    dataset, user_id = _resolve_dataset(scope, project_id, session_id)
+    dataset, user_id = _resolve_dataset(scope, eff_project, eff_session)
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:

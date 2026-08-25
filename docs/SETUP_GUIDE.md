@@ -114,6 +114,8 @@ is the file that gets committed and shared.
 | `COGNEE_SKIP_CONNECTION_TEST` | `true` | Skip startup connection timeout check |
 | `COGNEE_BIND_HOST` | `127.0.0.1` | Bind host for both processes (local mode). Set `0.0.0.0` deliberately to serve beyond localhost. |
 | `ONTOGRAM_TOKEN` | *(unset)* | Optional bearer token. When set, the MCP bridge rejects requests without `Authorization: Bearer <token>`. Strongly recommended whenever ports are exposed beyond loopback. |
+| `ONTOGRAM_PROJECT_ID` | *(unset)* | Default project slug for the bridge's tools, so agents get correct project boundaries without passing `project_id` on every call (harnesses set this per launch). |
+| `ONTOGRAM_SESSION_ID` | *(unset)* | Default session id used when a tool call uses `scope="session"` without one. |
 | `DATA_ROOT_DIRECTORY` | `/root/.cognee/data_storage` | Ingested data location — **must** sit on the volume |
 | `SYSTEM_ROOT_DIRECTORY` | `/root/.cognee/cognee_system` | Graph/vector/relational DB location — **must** sit on the volume |
 | `CACHE_ROOT_DIRECTORY` | `/root/.cognee/cache` | Cache location — **must** sit on the volume |

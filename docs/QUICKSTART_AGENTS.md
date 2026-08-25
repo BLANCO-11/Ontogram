@@ -75,6 +75,13 @@ agent instructions file — `AGENTS.md`, `CLAUDE.md`, or `.cursorrules` — at t
 repo root. It tells the agent to *recall at session start* and *remember
 decisions as they happen*.
 
+**Project boundaries can be automatic:** if your harness sets
+`ONTOGRAM_PROJECT_ID=<slug>` when launching the bridge (e.g. in an opencode/pi
+hook: `ONTOGRAM_PROJECT_ID=$(basename $PWD)`), every tool call resolves to that
+project without the model passing anything. Without it, a call missing
+`project_id` still works but returns an explicit "landed in GLOBAL" warning so
+the model self-corrects.
+
 For harnesses with shell hooks, use the bootstrap script instead:
 
 ```bash
