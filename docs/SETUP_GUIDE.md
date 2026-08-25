@@ -17,7 +17,7 @@ variable configuration, and troubleshooting for **Ontogram** (based on Cognee co
 
 ### Building and Running Ontogram Services
 ```bash
-cd /home/himanshu/builds/cognee
+cd Ontogram
 
 # Create your runtime config from the documented template
 cp .env.example .env
@@ -63,7 +63,7 @@ docker compose down -v       # also DELETES the cognee_data volume (all memory)
 ### Installation Steps
 ```bash
 # 1. Navigate to directory
-cd /home/himanshu/builds/cognee
+cd Ontogram
 
 # 2. Activate Python virtual environment
 source .venv/bin/activate

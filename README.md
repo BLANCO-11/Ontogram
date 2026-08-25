@@ -16,12 +16,12 @@
 * **Zero Core Modifications**: Ontogram is built 100% on top of native out-of-the-box Cognee storage engines (NetworkX/KuzuDB, LanceDB, SQLite) and LiteLLM adapters.
 * **Hybrid Multi-Protocol Architecture**:
   * **REST API Daemon (Port 9480)**: Single Cognee core process holding the databases — centralized connection pool preventing database locks across concurrent agents.
-  * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
+  * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, `list_datasets`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
   * **Graph Visualizer**: Served by the REST daemon at `http://localhost:9480/api/v1/visualize`. This is the only UI — Ontogram ships **no separate web frontend**; there are exactly two long-lived processes (REST daemon + MCP bridge) and two published ports.
 * **Non-Blocking Async Ingestion**: Memory ingestion (`remember`) returns **instantly in < 1 sec** (`run_in_background=True`) while building Knowledge Graphs asynchronously.
 * **LiteLLM Unified Adapter**: Connect to custom LiteLLM proxy gateways, OpenAI, Gemini, Anthropic, or local Ollama models.
 * **Local Fastembed Integration**: Local vector embeddings (`BAAI/bge-small-en-v1.5`) generated on-device with zero embedding API cost.
-* **Multi-Agent Memory Isolation**: Dynamic dataset partitioning per agent (`antigravity_memory`, `pi_memory`, `opencode_memory`, `shared-team`).
+* **Scoped Multi-Agent Memory Isolation**: Dataset partitioning by scope triple (`deck_global_memory`, `deck_<project>_memory`, `deck_<project>_<session>_memory`); legacy `<agent_id>_memory` partitions still served.
 
 ---
 
@@ -55,7 +55,7 @@
 
 ```bash
 # Clone or navigate to directory
-cd /home/himanshu/builds/cognee
+cd Ontogram
 
 # Create your config from the template, then set LLM_API_KEY
 cp .env.example .env
@@ -88,7 +88,23 @@ Point your MCP client at the HTTP endpoint — this is the harness-agnostic path
 }
 ```
 
-See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback. Tools exposed: `remember`, `recall`, `list_agents` (each takes an `agent_id` for per-agent isolation; default `shared-team`).
+See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback. Tools exposed:
+
+* `remember(text, scope, project_id, session_id, wait)` — store a fact; scoped per project (and optionally per session)
+* `recall(query, scope, project_id, session_id)` — query the scoped knowledge graph
+* `list_datasets()` — discover which datasets exist
+* `list_agents()` — list memory partitions (deck-style and legacy)
+
+Memory is partitioned by a **scope triple** instead of a flat agent id:
+
+| Scope | Dataset | `X-User-Id` |
+| :--- | :--- | :--- |
+| `global` | `deck_global_memory` | `global` |
+| `project` | `deck_<project-slug>_memory` | `<project-slug>` |
+| `session` | `deck_<project-slug>_<session-slug>_memory` | `<project-slug>` |
+
+Omitting `project_id` degrades leniently to the global dataset — agents storing
+project memory should pass `project_id` explicitly.
 
 > The MCP server key is still registered as `cognee-memory` in the shipped
 > configuration files — that identifier is wired into `.mcp.json` and client

@@ -255,10 +255,12 @@ async def list_datasets() -> str:
 
 @mcp.tool()
 async def list_agents() -> str:
-    """List the memory partitions (agents/tenants) that currently exist.
+    """List the memory partitions that currently exist.
 
-    Returns the known ``<agent_id>_memory`` datasets so a client can discover
-    which agents have stored memory.
+    Groups datasets by the scoped-memory contract: the global dataset, per-project
+    datasets (``deck_<project-slug>_memory``), per-session datasets
+    (``deck_<project-slug>_<session-slug>_memory``), plus any legacy
+    ``<agent_id>_memory`` partitions from before scoping was introduced.
     """
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -274,16 +276,48 @@ async def list_agents() -> str:
     except ValueError:
         return f"❌ Unexpected non-JSON response: {resp.text[:500]}"
 
-    names = []
+    global_ds: list[str] = []
+    projects: dict[str, list[str]] = {}
+    legacy: list[str] = []
+
     for d in datasets if isinstance(datasets, list) else []:
         name = d.get("name") if isinstance(d, dict) else None
-        if name:
-            agent = name[:-7] if name.endswith("_memory") else name
-            names.append(f"  • {agent}  (dataset: {name})")
+        if not name:
+            continue
+        if name == "deck_global_memory":
+            global_ds.append(name)
+        elif name.startswith("deck_") and name.endswith("_memory"):
+            parts = name[len("deck_"): -len("_memory")].split("_", 1)
+            project = parts[0] if parts else "?"
+            projects.setdefault(project, []).append(name)
+        elif name.endswith("_memory"):
+            legacy.append(name)
+        else:
+            legacy.append(name)
 
-    if not names:
+    sections = []
+    if global_ds:
+        sections.append("Global:\n  • deck_global_memory")
+    if projects:
+        lines = []
+        for project in sorted(projects):
+            scoped = sorted(projects[project])
+            proj_ds = [n for n in scoped if n == f"deck_{project}_memory"]
+            sess_ds = [n for n in scoped if n != f"deck_{project}_memory"]
+            entry = f"  • project '{project}'"
+            if proj_ds:
+                entry += f"\n      dataset: {proj_ds[0]}"
+            for s in sess_ds:
+                entry += f"\n      session dataset: {s}"
+            lines.append(entry)
+        sections.append("Scoped (deck contract):\n" + "\n".join(lines))
+    if legacy:
+        lines = [f"  • {n[:-7] if n.endswith('_memory') else n}  (dataset: {n})" for n in sorted(legacy)]
+        sections.append("Legacy agent partitions:\n" + "\n".join(lines))
+
+    if not sections:
         return "(No memory partitions yet. Use `remember` to create one.)"
-    return "Memory partitions:\n" + "\n".join(names)
+    return "Memory partitions:\n" + "\n".join(sections)
 
 
 # --------------------------------------------------------------------------- #

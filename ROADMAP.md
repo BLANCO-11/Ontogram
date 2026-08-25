@@ -11,13 +11,13 @@ Decisions locked with owner:
 
 ## Phase 1 — Correctness (doc/code drift & naming)
 
-- [ ] 1.1 Sync docs with actual MCP contract (`scope` / `project_id` / `session_id`
+- [x] 1.1 Sync docs with actual MCP contract (`scope` / `project_id` / `session_id`
       triple in `remember`/`recall`, not legacy `agent_id`)
       - README.md
       - docs/AGENT_INTEGRATION.md
       - docs/SETUP_GUIDE.md (stale `/home/himanshu/builds/cognee` paths → portable)
       - docs/ARCHITECTURE.md (partitioning table)
-- [ ] 1.2 Unify partition naming
+- [x] 1.2 Unify partition naming
       - `list_agents` becomes deck-aware (`deck_global_memory`,
         `deck_<project>_memory`, `deck_<project>_<session>_memory`) while still
         surfacing legacy `<agent_id>_memory` datasets
@@ -45,3 +45,6 @@ Decisions locked with owner:
 | Date | Phase | Commit | Notes |
 | :--- | :--- | :--- | :--- |
 | 2026-08-25 | — | a41d17e | Baseline: mcp>=2 compat + scoped remember/recall landed |
+| 2026-08-25 | — | a88686d | fastmcp>=2 dependency (leftover from mcp>=2 compat) |
+| 2026-08-25 | — | 8960503 | Roadmap tracker added; graphify-out ignored |
+| 2026-08-25 | 1 | (this commit) | Docs synced to scope triple; deck-aware list_agents; agent_client scope flags |

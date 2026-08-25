@@ -93,14 +93,21 @@ Default file-backed databases (SQLite, LanceDB) locking occurs when multiple age
 
 ## 3. Multi-Agent Memory Partitioning Strategy
 
-Ontogram uses dynamic Cognee dataset isolation to segregate agent knowledge while allowing shared access when needed:
+Ontogram uses dynamic Cognee dataset isolation to segregate agent knowledge while allowing shared access when needed. The **scoped-memory contract** (shared with the omp-deck MemoryService) resolves a `(scope, project_id, session_id)` triple into a dataset name:
 
-| Agent Identity | User ID (`X-User-Id` Header) | Target Dataset Name | Description |
+| Scope | Dataset Name | `X-User-Id` Header | Description |
 | :--- | :--- | :--- | :--- |
-| **Antigravity** | `antigravity` | `antigravity_memory` | Code architecture, refactoring history, project structure notes. |
-| **Pi** | `pi` | `pi_memory` | Conversational summaries, user interaction notes, quick reminders. |
-| **OpenCode** | `opencode` | `opencode_memory` | AST parsing notes, bug fix logs, test execution context. |
-| **Shared Team** | `shared-team` | `shared-team_memory` | Unified team knowledge base accessible across all local agents. |
+| `global` | `deck_global_memory` | `global` | Shared knowledge base accessible across all projects and agents. |
+| `project` | `deck_<project-slug>_memory` | `<project-slug>` | Per-project memory (decisions, architecture notes, bug logs). |
+| `session` | `deck_<project-slug>_<session-slug>_memory` | `<project-slug>` | Per-session scratch memory inside a project. |
+
+Missing ids degrade leniently: a session scope without ids falls back to
+project, then global.
+
+> [!NOTE]
+> **Legacy partitioning** (`<agent_id>_memory`, e.g. `antigravity_memory`,
+> `pi_memory`) is still served — `list_agents` surfaces those datasets and
+> `agent_client.py` writes to them. New integrations should use the scope triple.
 
 ---
 
