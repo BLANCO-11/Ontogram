@@ -37,6 +37,9 @@ import os
 import re
 import sys
 import argparse
+import asyncio
+import time
+import uuid
 from typing import Literal, Optional
 
 import httpx
@@ -64,6 +67,89 @@ MCP_PORT = int(os.getenv("COGNEE_MCP_PORT", "9481"))
 REMEMBER_SYNC_TIMEOUT = 300.0   # seconds, only used when wait=True
 REMEMBER_ASYNC_TIMEOUT = 30.0   # background ingestion returns fast
 RECALL_TIMEOUT = 120.0
+
+# --------------------------------------------------------------------------- #
+# Job tracking (bridge-side, closes the async ingestion loop)
+# --------------------------------------------------------------------------- #
+# The daemon accepts `remember` instantly and cognifies in the background;
+# without tracking, an agent never learns whether indexing actually finished.
+# The bridge keeps a small in-memory ledger per dataset and polls the daemon's
+# dataset list until a newly-created dataset shows up. Limitation (by design,
+# no Cognee core modifications): for datasets that already existed we cannot
+# observe the transition, so those jobs are reported as accepted-but-untracked
+# — pass wait=True when guaranteed indexing matters.
+
+JOB_POLL_INTERVAL = 5.0     # seconds between dataset-list probes
+JOB_POLL_TIMEOUT = 600.0    # give up tracking after 10 minutes
+JOBS_KEEP_PER_DATASET = 20
+
+_JOBS: dict[str, list[dict]] = {}
+
+
+def _now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def _record_job(dataset: str, state: str, detail: str = "") -> dict:
+    entry = {
+        "job_id": uuid.uuid4().hex[:8],
+        "submitted": _now(),
+        "state": state,
+        "detail": detail,
+    }
+    history = _JOBS.setdefault(dataset, [])
+    history.append(entry)
+    del history[:-JOBS_KEEP_PER_DATASET]
+    return entry
+
+
+def _update_job(dataset: str, job_id: str, state: str, detail: str = "") -> None:
+    for entry in reversed(_JOBS.get(dataset, [])):
+        if entry["job_id"] == job_id:
+            entry["state"] = state
+            entry["detail"] = detail
+            entry["updated"] = _now()
+            return
+
+
+async def _fetch_dataset_names() -> Optional[set[str]]:
+    """Return the set of dataset names known to the daemon, or None if unreachable."""
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{API_URL}/api/v1/datasets")
+    except httpx.RequestError:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        datasets = resp.json()
+    except ValueError:
+        return None
+    return {d.get("name") for d in datasets if isinstance(d, dict) and d.get("name")}
+
+
+async def _track_ingestion(dataset: str, job_id: str, existed_before: bool) -> None:
+    if existed_before:
+        # Dataset already visible before this write; its appearance cannot be
+        # used as a completion signal without touching Cognee core. Be honest.
+        _update_job(dataset, job_id, "accepted",
+                    "dataset already existed; async completion not observable "
+                    "(use remember(..., wait=True) for guaranteed indexing)")
+        return
+
+    deadline = time.monotonic() + JOB_POLL_TIMEOUT
+    while time.monotonic() < deadline:
+        await asyncio.sleep(JOB_POLL_INTERVAL)
+        names = await _fetch_dataset_names()
+        if names is None:
+            # Transient backend hiccup vs real failure: keep polling until timeout.
+            continue
+        if dataset in names:
+            _update_job(dataset, job_id, "ready", "knowledge graph built and dataset indexed")
+            return
+
+    _update_job(dataset, job_id, "timeout",
+                f"dataset '{dataset}' did not appear within {int(JOB_POLL_TIMEOUT)}s")
 
 if _FASTMCP_FLAVOR == "mcp":
     mcp = FastMCP("cognee-memory", host=MCP_HOST, port=MCP_PORT)
@@ -146,6 +232,9 @@ async def remember(
         return "❌ Nothing to remember: `text` was empty."
 
     dataset, user_id = _resolve_dataset(scope, project_id, session_id)
+
+    existed_before = dataset in (await _fetch_dataset_names() or set())
+
     files = {"data": ("memory.txt", text.encode("utf-8"), "text/plain")}
     data = {
         "datasetName": dataset,
@@ -166,7 +255,13 @@ async def remember(
         return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
 
     if resp.status_code in (200, 201, 202):
-        mode = "stored and indexed" if wait else "accepted (indexing in background)"
+        if wait:
+            _record_job(dataset, "ready", "synchronous ingestion completed")
+            mode = "stored and indexed"
+        else:
+            entry = _record_job(dataset, "indexing", "accepted by daemon; cognify running in background")
+            asyncio.create_task(_track_ingestion(dataset, entry["job_id"], existed_before))
+            mode = f"accepted (indexing in background; job {entry['job_id']} — check with remember_status)"
         return f"✓ Memory {mode} for scope '{scope}' (dataset '{dataset}')."
     return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
 
@@ -231,6 +326,99 @@ async def recall(
     if not texts:
         return f"(No relevant memories found for scope '{scope}' dataset '{dataset}'.)"
     return "\n\n".join(texts)
+
+
+@mcp.tool()
+async def remember_status(
+    scope: Literal["global", "project", "session"] = "project",
+    project_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Check whether background `remember` ingestions finished building their knowledge graphs.
+
+    Reports the recent ingestion jobs tracked by this bridge, newest first, with
+    one of these states: "indexing" (still building), "ready" (graph built and
+    dataset indexed), "accepted" (dataset already existed — completion not
+    observable; use wait=True for guarantees), or "timeout" (dataset never appeared).
+
+    Args:
+        scope: Scope triple of the dataset to inspect. Omitted datasets show all.
+        project_id: Project slug whose memory jobs should be shown.
+        session_id: Session id for scope "session".
+    """
+    if not _JOBS:
+        return "(No ingestion jobs tracked since bridge start.)"
+
+    dataset, _ = _resolve_dataset(scope, project_id, session_id)
+    targets = [dataset] if dataset in _JOBS else sorted(_JOBS)
+
+    lines = []
+    for name in targets:
+        for entry in reversed(_JOBS[name]):
+            line = f"  • [{entry['state']}] {name} job {entry['job_id']} submitted {entry['submitted']}"
+            if entry.get("detail"):
+                line += f" — {entry['detail']}"
+            lines.append(line)
+
+    if not lines:
+        return f"(No jobs tracked for dataset '{dataset}'.)"
+    return "Recent ingestion jobs:\n" + "\n".join(lines)
+
+
+@mcp.tool()
+async def forget(
+    scope: Literal["global", "project", "session"] = "project",
+    project_id: str | None = None,
+    session_id: str | None = None,
+) -> str:
+    """Delete an entire memory partition (dataset) and everything remembered in it.
+
+    Coarse-grained by design: the whole scoped dataset is removed — global,
+    per-project, or per-session. There is no fact-level deletion; to start over
+    for one project, forget its project-scoped dataset and re-remember what
+    should be kept (or store it under a new project slug).
+
+    Args:
+        scope: Which partition to delete: "global", "project" (requires
+            project_id), or "session" (requires project_id and session_id).
+        project_id: Project slug owning the memory to delete.
+        session_id: Session id for scope "session".
+    """
+    if scope == "global":
+        pass  # explicit global deletion is allowed
+    elif scope == "session" and not (project_id and session_id):
+        return ("❌ Refusing to degrade: session scope needs both project_id and "
+                "session_id. A wrong fallback here would delete the wrong dataset.")
+    elif scope == "project" and not project_id:
+        return ("❌ Refusing to degrade: project scope needs project_id. A wrong "
+                "fallback here would delete the global dataset.")
+
+    dataset, user_id = _resolve_dataset(scope, project_id, session_id)
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            listing = await client.get(f"{API_URL}/api/v1/datasets")
+            if listing.status_code != 200:
+                return f"❌ Memory backend returned HTTP {listing.status_code}: {listing.text[:500]}"
+            try:
+                datasets = listing.json()
+            except ValueError:
+                return f"❌ Unexpected non-JSON response: {listing.text[:500]}"
+
+            target = next(
+                (d for d in datasets if isinstance(d, dict) and d.get("name") == dataset),
+                None,
+            )
+            if target is None or "id" not in target:
+                return f"(Nothing to forget: no dataset named '{dataset}' exists.)"
+
+            resp = await client.delete(f"{API_URL}/api/v1/datasets/{target['id']}")
+    except httpx.RequestError as exc:
+        return f"❌ Could not reach Cognee memory backend at {API_URL}: {exc}"
+
+    if resp.status_code in (200, 202, 204):
+        return f"✓ Forgot dataset '{dataset}' ({scope} scope). All memories in it are gone."
+    return f"❌ Memory backend returned HTTP {resp.status_code}: {resp.text[:500]}"
 
 
 @mcp.tool()

@@ -11,7 +11,7 @@ based on Cognee core.
 The Ontogram MCP server is **harness/agent-agnostic**: it runs as a long-lived
 streamable-HTTP endpoint, so every MCP client connects the same way — by URL.
 No per-agent process, no local venv required. Tools exposed: `remember`,
-`recall`, `list_datasets`, `list_agents`.
+`recall`, `remember_status`, `forget`, `list_datasets`, `list_agents`.
 
 ### Scoped memory contract
 
@@ -34,6 +34,21 @@ explicitly for project or session memory.
 // recall: search that same scope
 { "query": "which database did we choose?", "scope": "project", "project_id": "ontogram" }
 ```
+
+### Closing the async loop
+
+`remember` returns as soon as the daemon accepts the write; cognify (graph
+building) continues in the background. To confirm indexing finished, call
+`remember_status` with the same scope triple — it reports `indexing`, `ready`,
+or `timeout` for recent jobs. When guaranteed indexing matters more than speed,
+pass `wait=true` to `remember`.
+
+### Forgetting memory
+
+`forget(scope, project_id, session_id)` deletes an **entire** scoped dataset.
+It deliberately refuses lenient fallbacks: session scope without ids or project
+scope without `project_id` is rejected rather than silently deleting the global
+dataset. There is no fact-level deletion — re-remember what should be kept.
 
 ### Registration (recommended — HTTP)
 Add this block to your agent's MCP configuration. The server key stays

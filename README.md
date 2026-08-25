@@ -16,7 +16,7 @@
 * **Zero Core Modifications**: Ontogram is built 100% on top of native out-of-the-box Cognee storage engines (NetworkX/KuzuDB, LanceDB, SQLite) and LiteLLM adapters.
 * **Hybrid Multi-Protocol Architecture**:
   * **REST API Daemon (Port 9480)**: Single Cognee core process holding the databases — centralized connection pool preventing database locks across concurrent agents.
-  * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, `list_datasets`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
+  * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, `remember_status`, `forget`, `list_datasets`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
   * **Graph Visualizer**: Served by the REST daemon at `http://localhost:9480/api/v1/visualize`. This is the only UI — Ontogram ships **no separate web frontend**; there are exactly two long-lived processes (REST daemon + MCP bridge) and two published ports.
 * **Non-Blocking Async Ingestion**: Memory ingestion (`remember`) returns **instantly in < 1 sec** (`run_in_background=True`) while building Knowledge Graphs asynchronously.
 * **LiteLLM Unified Adapter**: Connect to custom LiteLLM proxy gateways, OpenAI, Gemini, Anthropic, or local Ollama models.
@@ -92,6 +92,8 @@ See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback. Too
 
 * `remember(text, scope, project_id, session_id, wait)` — store a fact; scoped per project (and optionally per session)
 * `recall(query, scope, project_id, session_id)` — query the scoped knowledge graph
+* `remember_status(scope, project_id, session_id)` — confirm background ingestions finished indexing
+* `forget(scope, project_id, session_id)` — delete an entire scoped dataset (coarse-grained by design)
 * `list_datasets()` — discover which datasets exist
 * `list_agents()` — list memory partitions (deck-style and legacy)
 

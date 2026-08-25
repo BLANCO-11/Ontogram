@@ -25,10 +25,14 @@ Decisions locked with owner:
 
 ## Phase 2 — Capability
 
-- [ ] 2.1 `remember_status` tool: bridge-side job tracking so agents can confirm
+- [x] 2.1 `remember_status` tool: bridge-side job tracking so agents can confirm
       background cognify succeeded (closes the silent-async-failure gap)
-- [ ] 2.2 `forget` tool: dataset-level delete via REST passthrough
-      (`DELETE /api/v1/datasets/{name}`) — coarse-grained by design
+- [x] 2.2 `forget` tool: dataset-level delete via REST passthrough
+      (`DELETE /api/v1/datasets/{id}`, name→id resolved from the dataset list) —
+      coarse-grained by design; refuses lenient scope fallbacks to protect the
+      global dataset. Note: Cognee's REST API also exposes per-data-item
+      deletion (`DELETE .../data/{data_id}`) if finer granularity is ever
+      wanted without core changes.
 
 ## Phase 3 — Ops & UX
 
@@ -47,4 +51,5 @@ Decisions locked with owner:
 | 2026-08-25 | — | a41d17e | Baseline: mcp>=2 compat + scoped remember/recall landed |
 | 2026-08-25 | — | a88686d | fastmcp>=2 dependency (leftover from mcp>=2 compat) |
 | 2026-08-25 | — | 8960503 | Roadmap tracker added; graphify-out ignored |
-| 2026-08-25 | 1 | (this commit) | Docs synced to scope triple; deck-aware list_agents; agent_client scope flags |
+| 2026-08-25 | 1 | dc78ad3 | Docs synced to scope triple; deck-aware list_agents; agent_client scope flags |
+| 2026-08-25 | 2 | (this commit) | remember_status job tracking; dataset-level forget with fallback guards; docs updated |
