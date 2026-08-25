@@ -19,6 +19,11 @@ services:
       - COGNEE_MCP_PORT=9481
       - COGNEE_MCP_TRANSPORT=http
       - COGNEE_API_URL=http://localhost:9480
+      # Inside the container we must bind 0.0.0.0: Docker's port publishing
+      # forwards to the container's eth0, NOT its internal loopback. The
+      # actual security boundary is the host-side "127.0.0.1:" prefix on the
+      # port mappings above (plus ONTOGRAM_TOKEN when exposing beyond that).
+      - COGNEE_BIND_HOST=0.0.0.0
       # Persist ALL Cognee storage on the named volume. Without these, Cognee
       # writes its databases inside the image (ephemeral) and every rebuild
       # wipes all memory.
