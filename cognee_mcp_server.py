@@ -29,8 +29,13 @@ Transports:
 Configuration (env vars):
   COGNEE_API_URL        REST daemon base URL           (default http://localhost:9480)
   COGNEE_MCP_TRANSPORT  http | sse | stdio             (default http)
-  COGNEE_MCP_HOST       bind host for http/sse         (default 0.0.0.0)
+  COGNEE_MCP_HOST       bind host for http/sse         (default 127.0.0.1 — loopback;
+                        set 0.0.0.0 deliberately to expose beyond localhost)
   COGNEE_MCP_PORT       bind port for http/sse         (default 9481)
+  ONTOGRAM_TOKEN        optional bearer token. When set, every HTTP request to
+                        this bridge must carry `Authorization: Bearer <token>`;
+                        requests without it get 401. Recommended whenever the
+                        bridge binds beyond loopback.
 """
 
 import os
@@ -60,8 +65,9 @@ except ImportError:
 # Configuration
 # --------------------------------------------------------------------------- #
 API_URL = os.getenv("COGNEE_API_URL", "http://localhost:9480").rstrip("/")
-MCP_HOST = os.getenv("COGNEE_MCP_HOST", "0.0.0.0")
+MCP_HOST = os.getenv("COGNEE_MCP_HOST", "127.0.0.1")
 MCP_PORT = int(os.getenv("COGNEE_MCP_PORT", "9481"))
+ONTOGRAM_TOKEN = os.getenv("ONTOGRAM_TOKEN", "").strip()
 
 # Cognify (graph building) can take a while; recall runs an LLM completion.
 REMEMBER_SYNC_TIMEOUT = 300.0   # seconds, only used when wait=True
@@ -511,6 +517,52 @@ async def list_agents() -> str:
 # --------------------------------------------------------------------------- #
 # Entrypoint
 # --------------------------------------------------------------------------- #
+def _bearer_guard(app):
+    """Pure-ASGI middleware enforcing `Authorization: Bearer <ONTOGRAM_TOKEN>`."""
+    expected = f"Bearer {ONTOGRAM_TOKEN}".encode()
+
+    async def wrapped(scope, receive, send):
+        if scope["type"] == "http":
+            headers = {k.lower(): v for k, v in scope.get("headers", [])}
+            if headers.get(b"authorization") != expected:
+                await send({
+                    "type": "http.response.start",
+                    "status": 401,
+                    "headers": [(b"content-type", b"text/plain")],
+                })
+                await send({"type": "http.response.body", "body": b"Unauthorized: missing or invalid bearer token"})
+                return
+        await app(scope, receive, send)
+
+    return wrapped
+
+
+def _streamable_http_asgi_app():
+    """Best-effort ASGI app across mcp<2 (mcp.server.fastmcp) and mcp>=2 (fastmcp)."""
+    if hasattr(mcp, "streamable_http_app"):
+        return mcp.streamable_http_app()
+    return mcp.http_app(path="/mcp")
+
+
+def _run_http(transport: str) -> None:
+    url_path = "/mcp" if transport == "streamable-http" else "/sse"
+    print(
+        f"🧠 Cognee Memory MCP ({transport}) on "
+        f"http://{MCP_HOST}:{MCP_PORT}{url_path}  →  backend {API_URL}"
+        + ("  [bearer token required]" if ONTOGRAM_TOKEN else ""),
+        file=sys.stderr,
+        flush=True,
+    )
+    if ONTOGRAM_TOKEN:
+        import uvicorn
+
+        uvicorn.run(_bearer_guard(_streamable_http_asgi_app()), host=MCP_HOST, port=MCP_PORT)
+    elif _FASTMCP_FLAVOR == "fastmcp":
+        mcp.run(transport=transport, host=MCP_HOST, port=MCP_PORT)
+    else:
+        mcp.run(transport=transport)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Cognee agent-agnostic memory MCP server")
     parser.add_argument(
@@ -522,29 +574,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.transport == "http":
-        transport = "streamable-http"
-        print(
-            f"🧠 Cognee Memory MCP (streamable-http) on "
-            f"http://{MCP_HOST}:{MCP_PORT}/mcp  →  backend {API_URL}",
-            file=sys.stderr,
-            flush=True,
-        )
-        if _FASTMCP_FLAVOR == "fastmcp":
-            mcp.run(transport=transport, host=MCP_HOST, port=MCP_PORT)
-        else:
-            mcp.run(transport=transport)
+        _run_http("streamable-http")
     elif args.transport == "sse":
-        transport = "sse"
-        print(
-            f"🧠 Cognee Memory MCP (sse) on "
-            f"http://{MCP_HOST}:{MCP_PORT}/sse  →  backend {API_URL}",
-            file=sys.stderr,
-            flush=True,
-        )
-        if _FASTMCP_FLAVOR == "fastmcp":
-            mcp.run(transport=transport, host=MCP_HOST, port=MCP_PORT)
-        else:
-            mcp.run(transport=transport)
+        _run_http("sse")
     else:
         transport = "stdio"
         print(f"🧠 Cognee Memory MCP (stdio)  →  backend {API_URL}", file=sys.stderr, flush=True)

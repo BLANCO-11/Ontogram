@@ -43,8 +43,10 @@
 │   ├── SETUP_GUIDE.md          # Step-by-step setup & Docker deployment guide
 │   ├── LLM_PROVIDERS.md        # LiteLLM, custom gateway, and embedding config
 │   └── AGENT_INTEGRATION.md    # Guide for Antigravity, Pi, OpenCode & Python
-└── plans/
-    └── cognee_hybrid_service_plan.md  # Original architecture plan
+├── integrations/                 # Harness auto-integration assets
+│   ├── AGENTS_MEMORY.md          # Memory protocol block for AGENTS.md / CLAUDE.md
+│   └── memory_bootstrap.py       # Session hook: recall-on-start / remember-on-end
+└── ROADMAP.md                    # Improvement roadmap tracker
 ```
 
 ---
@@ -88,7 +90,7 @@ Point your MCP client at the HTTP endpoint — this is the harness-agnostic path
 }
 ```
 
-See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback. Tools exposed:
+See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback and bearer-token notes. Tools exposed:
 
 * `remember(text, scope, project_id, session_id, wait)` — store a fact; scoped per project (and optionally per session)
 * `recall(query, scope, project_id, session_id)` — query the scoped knowledge graph
@@ -111,6 +113,23 @@ project memory should pass `project_id` explicitly.
 > The MCP server key is still registered as `cognee-memory` in the shipped
 > configuration files — that identifier is wired into `.mcp.json` and client
 > configs, so Ontogram keeps it for backwards compatibility.
+
+### Make agents actually use memory
+
+Tools alone are not enough — wire the memory protocol into your harness so it
+recalls at session start and remembers durable facts as they happen:
+
+- Copy the protocol block from [integrations/AGENTS_MEMORY.md](integrations/AGENTS_MEMORY.md)
+  into your `AGENTS.md` / `CLAUDE.md` / `.cursorrules`.
+- Or use the hook script for harnesses with shell hooks:
+
+```bash
+# session start: print stored project context
+./integrations/memory_bootstrap.py recall --project-id myproject
+
+# session end / checkpoint: store a summary
+./integrations/memory_bootstrap.py remember "Decided X because Y" --project-id myproject
+```
 
 ---
 

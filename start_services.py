@@ -53,6 +53,9 @@ def main():
     backend_port = int(os.getenv("COGNEE_BACKEND_PORT", "9480"))
     mcp_port = int(os.getenv("COGNEE_MCP_PORT", "9481"))
     mcp_transport = os.getenv("COGNEE_MCP_TRANSPORT", "http")
+    # Loopback by default: memory is personal. Set COGNEE_BIND_HOST=0.0.0.0
+    # deliberately (and set ONTOGRAM_TOKEN) to expose beyond localhost.
+    bind_host = os.getenv("COGNEE_BIND_HOST", "127.0.0.1")
 
     print("==================================================")
     print("       Cognee Core Agent Memory Engine            ")
@@ -62,33 +65,44 @@ def main():
     if is_port_in_use(backend_port):
         print(f"⚠️  Backend port {backend_port} is already active.")
     else:
-        print(f"🚀 Starting Backend REST API Server on 0.0.0.0:{backend_port}...")
+        print(f"🚀 Starting Backend REST API Server on {bind_host}:{backend_port}...")
         backend_cmd = [
             sys.executable,
             "-m",
             "uvicorn",
             "cognee.api.client:app",
             "--host",
-            "0.0.0.0",
+            bind_host,
             "--port",
             str(backend_port),
         ]
         p_backend = subprocess.Popen(backend_cmd, cwd=str(BASE_DIR))
         processes.append(p_backend)
-        time.sleep(2)
         if p_backend.poll() is not None:
             print("❌ Backend failed to start.")
             sys.exit(1)
-        print(f"✓ Backend running at http://0.0.0.0:{backend_port} (Docs: http://localhost:{backend_port}/docs)")
+        # Wait for the daemon to actually accept connections before starting
+        # the MCP bridge, so early tool calls don't hit a dead proxy target.
+        for _ in range(60):  # up to ~60s (cognee imports are heavy on cold start)
+            if is_port_in_use(backend_port):
+                break
+            if p_backend.poll() is not None:
+                print("❌ Backend failed to start.")
+                sys.exit(1)
+            time.sleep(1)
+        else:
+            print(f"⚠️  Backend did not accept connections within 60s; continuing anyway.")
+        print(f"✓ Backend running at http://{bind_host}:{backend_port} (Docs: http://localhost:{backend_port}/docs)")
 
     # Start the agent-agnostic Memory MCP server (proxies to the REST backend
     # so exactly one Cognee process holds the databases -> no write-lock races).
     if is_port_in_use(mcp_port):
         print(f"⚠️  MCP port {mcp_port} is already active.")
     else:
-        print(f"🚀 Starting Memory MCP Server ({mcp_transport}) on 0.0.0.0:{mcp_port}...")
+        print(f"🚀 Starting Memory MCP Server ({mcp_transport}) on {bind_host}:{mcp_port}...")
         mcp_env = os.environ.copy()
         mcp_env.setdefault("COGNEE_API_URL", f"http://localhost:{backend_port}")
+        mcp_env["COGNEE_MCP_HOST"] = bind_host
         mcp_env["COGNEE_MCP_PORT"] = str(mcp_port)
         mcp_cmd = [
             sys.executable,
@@ -102,7 +116,7 @@ def main():
         if p_mcp.poll() is not None:
             print("❌ MCP server failed to start.")
             cleanup()
-        print(f"✓ Memory MCP running at http://0.0.0.0:{mcp_port}/mcp")
+        print(f"✓ Memory MCP running at http://{bind_host}:{mcp_port}/mcp")
 
     # Information Summary
     print("\n--- Cognee Agent Memory Status Summary ---")

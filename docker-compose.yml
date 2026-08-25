@@ -6,8 +6,11 @@ services:
     container_name: cognee_hybrid_service
     restart: unless-stopped
     ports:
-      - "9480:9480" # REST API Backend & Swagger Docs & Knowledge Graph Visualizer
-      - "9481:9481" # Memory MCP Server (streamable-http) -> http://localhost:9481/mcp
+      # Published on loopback only: memory stays on this machine. To expose on
+      # your LAN deliberately, change to "9480:9480"/"9481:9481" AND set
+      # ONTOGRAM_TOKEN in .env (the MCP bridge then requires a bearer token).
+      - "127.0.0.1:9480:9480" # REST API Backend & Swagger Docs & Knowledge Graph Visualizer
+      - "127.0.0.1:9481:9481" # Memory MCP Server (streamable-http) -> http://localhost:9481/mcp
     env_file:
       - .env
     environment:
@@ -24,6 +27,12 @@ services:
       - CACHE_ROOT_DIRECTORY=/root/.cognee/cache
     volumes:
       - cognee_data:/root/.cognee
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9480/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
 
 volumes:
   cognee_data:

@@ -36,13 +36,20 @@ Decisions locked with owner:
 
 ## Phase 3 — Ops & UX
 
-- [ ] 3.1 Security: default bind `127.0.0.1` for MCP bridge (+ daemon guidance),
+- [x] 3.1 Security: default bind `127.0.0.1` for MCP bridge (+ daemon guidance),
       opt-in `ONTOGRAM_TOKEN` bearer auth for LAN exposure
-- [ ] 3.2 docker-compose healthcheck + startup ordering (daemon ready before bridge)
-- [ ] 3.3 Harness auto-integration
-      - shipped `.mcp.json` template
-      - AGENTS.md memory snippet
-      - bootstrap hook script (recall-on-start / remember-on-end)
+      - bridge: loopback default host + pure-ASGI bearer guard when token set
+      - `start_services.py`: `COGNEE_BIND_HOST` (default loopback) for both processes
+      - compose: ports published on `127.0.0.1` only; docs updated
+- [x] 3.2 docker-compose healthcheck (`curl /docs`, start_period 90s) +
+      startup ordering (orchestrator waits up to 60s for daemon readiness
+      before launching the MCP bridge)
+- [x] 3.3 Harness auto-integration
+      - integrations/AGENTS_MEMORY.md — memory protocol block for AGENTS.md /
+        CLAUDE.md / .cursorrules
+      - integrations/memory_bootstrap.py — session hook script
+        (recall-on-start / remember-on-end)
+      - README integration section; mcp_config_example.json refreshed
 
 ## Status log
 
@@ -52,4 +59,5 @@ Decisions locked with owner:
 | 2026-08-25 | — | a88686d | fastmcp>=2 dependency (leftover from mcp>=2 compat) |
 | 2026-08-25 | — | 8960503 | Roadmap tracker added; graphify-out ignored |
 | 2026-08-25 | 1 | dc78ad3 | Docs synced to scope triple; deck-aware list_agents; agent_client scope flags |
-| 2026-08-25 | 2 | (this commit) | remember_status job tracking; dataset-level forget with fallback guards; docs updated |
+| 2026-08-25 | 2 | 114b28a | remember_status job tracking; dataset-level forget with fallback guards; docs updated |
+| 2026-08-25 | 3 | (this commit) | Loopback default + ONTOGRAM_TOKEN guard; healthcheck & startup ordering; harness integration assets |

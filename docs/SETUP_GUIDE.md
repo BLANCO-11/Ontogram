@@ -34,7 +34,9 @@ docker compose ps
 ```
 
 This brings up a **single container** (`cognee_hybrid_service`) running both
-Ontogram processes and publishing two ports:
+Ontogram processes and publishing two ports **on loopback only** (memory stays
+on this machine; edit the compose port mappings and set `ONTOGRAM_TOKEN` to
+expose deliberately):
 
 | URL | What it is |
 | :--- | :--- |
@@ -110,6 +112,8 @@ is the file that gets committed and shared.
 | `COGNEE_MCP_TRANSPORT` | `http` | MCP transport (`http`, `sse`, `stdio`) |
 | `COGNEE_API_URL` | `http://localhost:9480` | REST daemon base URL used by the MCP bridge |
 | `COGNEE_SKIP_CONNECTION_TEST` | `true` | Skip startup connection timeout check |
+| `COGNEE_BIND_HOST` | `127.0.0.1` | Bind host for both processes (local mode). Set `0.0.0.0` deliberately to serve beyond localhost. |
+| `ONTOGRAM_TOKEN` | *(unset)* | Optional bearer token. When set, the MCP bridge rejects requests without `Authorization: Bearer <token>`. Strongly recommended whenever ports are exposed beyond loopback. |
 | `DATA_ROOT_DIRECTORY` | `/root/.cognee/data_storage` | Ingested data location — **must** sit on the volume |
 | `SYSTEM_ROOT_DIRECTORY` | `/root/.cognee/cognee_system` | Graph/vector/relational DB location — **must** sit on the volume |
 | `CACHE_ROOT_DIRECTORY` | `/root/.cognee/cache` | Cache location — **must** sit on the volume |
@@ -127,6 +131,21 @@ is the file that gets committed and shared.
 > [!NOTE]
 > `COGNEE_FRONTEND_PORT` may still be present in your `.env`. It is a leftover
 > from the removed web dashboard and is read by nothing — safe to delete.
+
+### Security model
+
+By default everything binds to loopback (`COGNEE_BIND_HOST=127.0.0.1`) and
+Docker publishes ports on `127.0.0.1` only, so your memory is reachable solely
+from this machine. To serve other machines on your LAN:
+
+1. Set `ONTOGRAM_TOKEN=<random-secret>` in `.env` — the MCP bridge then
+   requires an `Authorization: Bearer <token>` header on every request.
+2. Change the compose port mappings to `"9480:9480"` / `"9481:9481"` (or set
+   `COGNEE_BIND_HOST=0.0.0.0` when running without Docker).
+
+Note the REST daemon itself is stock Cognee and has no token support; only the
+MCP bridge enforces `ONTOGRAM_TOKEN`, so prefer agent traffic over MCP when
+exposed.
 
 ---
 
