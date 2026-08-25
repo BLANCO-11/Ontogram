@@ -172,9 +172,11 @@ source .venv/bin/activate
 For detailed guides, refer to the Ontogram documentation suite in `docs/`:
 
 * 🏛 **[Architecture & Memory Model](docs/ARCHITECTURE.md)**: System design, entity extraction pipelines, and multi-tenant memory partitioning.
+* ⚡ **[Agent Quickstart](docs/QUICKSTART_AGENTS.md)**: Wire opencode, pi, Claude Code, or Cursor into memory in ~5 minutes.
 * 🛠 **[Setup & Deployment Guide](docs/SETUP_GUIDE.md)**: Local setup, Docker Compose, systemd daemonization, and troubleshooting.
 * ⚙️ **[LLM & Embedding Providers](docs/LLM_PROVIDERS.md)**: LiteLLM configuration, custom gateways, local Ollama, and Fastembed setup.
 * 🔌 **[Agent Integration Guide](docs/AGENT_INTEGRATION.md)**: Configuring Antigravity (MCP), Pi, OpenCode, and custom Python agents.
+* 📊 **[Performance: With vs Without Memory](docs/PERFORMANCE.md)**: Measured service benchmarks, workflow comparison, and a reproducible A/B protocol.
 
 ---
 
