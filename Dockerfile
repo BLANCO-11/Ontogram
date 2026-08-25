@@ -32,6 +32,7 @@ RUN pip install --no-cache-dir \
     requests \
     httpx \
     "mcp>=1.2.0" \
+    "fastmcp>=2.0.0" \
     python-dotenv
 
 # Copy application files
