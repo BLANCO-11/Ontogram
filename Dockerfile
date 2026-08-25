@@ -35,8 +35,10 @@ RUN pip install --no-cache-dir \
     "fastmcp>=2.0.0" \
     python-dotenv
 
-# Copy application files
-COPY .env /app/.env
+# Copy application files.
+# NOTE: .env is deliberately NOT baked into the image — it contains secrets and
+# goes stale on rebuilds. Configuration is injected at runtime via
+# docker-compose env_file (or a mounted/adjacent .env for bare-metal runs).
 COPY manage_llm.py /app/manage_llm.py
 COPY start_services.py /app/start_services.py
 COPY agent_client.py /app/agent_client.py

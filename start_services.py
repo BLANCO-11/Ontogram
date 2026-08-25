@@ -16,13 +16,15 @@ BASE_DIR = Path(__file__).parent
 ENV_PATH = BASE_DIR / ".env"
 
 def load_env():
+    """Load .env as *fallback defaults*: variables already present in the
+    environment (e.g. injected by docker-compose env_file) always win."""
     if ENV_PATH.exists():
         with open(ENV_PATH, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, val = line.split("=", 1)
-                    os.environ[key.strip()] = val.strip().strip('"').strip("'")
+                    os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:

@@ -170,7 +170,13 @@ exposed.
   `docker-compose.yml`), then verify the volume is populated:
   `docker compose exec cognee_hybrid_service ls -la /root/.cognee`.
 
-### Issue 5: Looking for the web dashboard / a frontend port
+### Issue 5: Changed `.env` but the container still uses old values
+- **Cause**: `docker compose up -d` does not recreate a running container when
+  only the *contents* of `.env` change (e.g. a new `LLM_API_KEY`).
+- **Fix**: `docker compose up -d --force-recreate`. Verify with:
+  `docker compose exec cognee_hybrid_service printenv LLM_API_KEY`.
+
+### Issue 6: Looking for the web dashboard / a frontend port
 - **Cause**: The Next.js dashboard from the original design was removed.
 - **Fix**: Nothing to start. Use `http://localhost:9480/api/v1/visualize` for the
   knowledge graph and `http://localhost:9480/docs` for the API. Any lingering

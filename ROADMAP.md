@@ -60,4 +60,24 @@ Decisions locked with owner:
 | 2026-08-25 | — | 8960503 | Roadmap tracker added; graphify-out ignored |
 | 2026-08-25 | 1 | dc78ad3 | Docs synced to scope triple; deck-aware list_agents; agent_client scope flags |
 | 2026-08-25 | 2 | 114b28a | remember_status job tracking; dataset-level forget with fallback guards; docs updated |
-| 2026-08-25 | 3 | (this commit) | Loopback default + ONTOGRAM_TOKEN guard; healthcheck & startup ordering; harness integration assets |
+| 2026-08-25 | 3 | 6f5bff4 | Loopback default + ONTOGRAM_TOKEN guard; healthcheck & startup ordering; harness integration assets |
+| 2026-08-25 | T | (this commit) | Live e2e on OpenCode Go: fixed container-internal bind (Docker forwards to eth0), stopped baking .env into image, load_env no longer overrides compose env; SETUP_GUIDE issue 5 added |
+
+## Live test results (2026-08-25, OpenCode Go / deepseek-v4-flash)
+
+| Test | Result |
+| :--- | :--- |
+| Daemon + MCP bridge startup ordering (wait-for-daemon) | PASS |
+| Host→container reachability with loopback port publishing | PASS (after bind fix) |
+| REST `remember` async acceptance (<1s) | PASS (345ms) |
+| MCP handshake + `tools/list` (all 6 tools) | PASS |
+| MCP sync `remember` (real cognify via LLM) | PASS |
+| MCP `recall` (correct answer returned) | PASS |
+| MCP async `remember` → `remember_status` indexing→ready | PASS (~10s) |
+| MCP `forget` dataset delete + graceful re-run refusal | PASS |
+| `list_agents` deck-aware grouping vs real datasets | PASS |
+
+Known limitation: for datasets that already existed before a write,
+`remember_status` reports "accepted" without completion confirmation
+(Cognee creates the dataset row *before* extraction, so bare existence is not
+a completion signal). Use `remember(..., wait=True)` for guaranteed indexing.
