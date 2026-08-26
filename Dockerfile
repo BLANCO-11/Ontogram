@@ -1,58 +1,47 @@
 # ====================================================================
-# Cognee Core Agent Memory Service Dockerfile
-# Production-ready multi-agent memory engine with LiteLLM & Fastembed
+# Ontogram — hybrid memory service for local AI agents
+# Built on the official cognee image (pinned) instead of raw python,
+# so the core and its storage layout are maintained upstream.
+#
+# NOTE: cognee/cognee:main moved storage defaults to /cognee-storage and
+# now runs multi-tenant (auth required) by default — both match what
+# Ontogram's ACL adapter expects. docker-compose.yml mounts the data
+# volume at /cognee-storage with legacy-compatible *_ROOT_DIRECTORY
+# overrides so existing volumes keep working.
 # ====================================================================
 
-FROM python:3.12-slim
+FROM cognee/cognee:main
 
-# Prevent Python from writing bytecode and set unbuffered output
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+USER root
 
-# Install core build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    git \
-    && rm -rf /var/lib/apt/lists/*
+# MCP/bridge dependencies not shipped in the base image.
+# The base image runs a uv-managed virtualenv at /app/.venv WITHOUT pip —
+# bootstrap pip first, then install there (not into the system python).
+RUN /app/.venv/bin/python -m ensurepip --upgrade >/dev/null \
+    && /app/.venv/bin/python -m pip install --no-cache-dir \
+    "mcp>=1.2.0" \
+    "fastmcp>=2.0.0" \
+    requests \
+    python-dotenv
 
 WORKDIR /app
 
-# Upgrade pip and install Python packages
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel
-
-# Install Cognee, LiteLLM, Fastembed and dependencies
-RUN pip install --no-cache-dir \
-    "cognee>=1.4.0" \
-    "litellm>=1.40.0" \
-    fastembed \
-    uvicorn \
-    fastapi \
-    requests \
-    httpx \
-    "mcp>=1.2.0" \
-    "fastmcp>=2.0.0" \
-    python-dotenv
-
-# Copy application files.
-# NOTE: .env is deliberately NOT baked into the image — it contains secrets and
-# goes stale on rebuilds. Configuration is injected at runtime via
-# docker-compose env_file (or a mounted/adjacent .env for bare-metal runs).
+# Application files (.env deliberately NOT baked in — see ROADMAP)
 COPY manage_llm.py /app/manage_llm.py
 COPY start_services.py /app/start_services.py
 COPY agent_client.py /app/agent_client.py
 COPY cognee_mcp_server.py /app/cognee_mcp_server.py
+COPY ontogram_backend.py /app/ontogram_backend.py
 COPY mcp_config_example.json /app/mcp_config_example.json
 
-# Make scripts executable
 RUN chmod +x /app/manage_llm.py /app/start_services.py /app/agent_client.py /app/cognee_mcp_server.py
 
-# Expose REST API (9480) & MCP Server (9481)
+# REST API (9480) & MCP bridge (9481)
 EXPOSE 9480 9481
 
-# Set persistent data directory
-VOLUME ["/root/.cognee"]
+VOLUME ["/cognee-storage"]
 
-# Default entrypoint runs the core service orchestrator
+# Base image ENTRYPOINT starts its own server on :8000 and ignores CMD —
+# replace it so our orchestrator (daemon :9480 + MCP bridge :9481) runs.
+ENTRYPOINT []
 CMD ["python", "start_services.py"]

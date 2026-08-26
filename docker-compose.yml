@@ -24,14 +24,15 @@ services:
       # actual security boundary is the host-side "127.0.0.1:" prefix on the
       # port mappings above (plus ONTOGRAM_TOKEN when exposing beyond that).
       - COGNEE_BIND_HOST=0.0.0.0
-      # Persist ALL Cognee storage on the named volume. Without these, Cognee
-      # writes its databases inside the image (ephemeral) and every rebuild
-      # wipes all memory.
-      - DATA_ROOT_DIRECTORY=/root/.cognee/data_storage
-      - SYSTEM_ROOT_DIRECTORY=/root/.cognee/cognee_system
-      - CACHE_ROOT_DIRECTORY=/root/.cognee/cache
+      # Storage: modern cognee defaults to /cognee-storage/{data,system}; we
+      # point at our long-standing volume layout (data_storage/cognee_system)
+      # so pre-upgrade memories keep working. All three MUST sit on the volume
+      # or every rebuild wipes memory.
+      - DATA_ROOT_DIRECTORY=/cognee-storage/data_storage
+      - SYSTEM_ROOT_DIRECTORY=/cognee-storage/cognee_system
+      - CACHE_ROOT_DIRECTORY=/cognee-storage/cache
     volumes:
-      - cognee_data:/root/.cognee
+      - cognee_data:/cognee-storage
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9480/docs"]
       interval: 30s
