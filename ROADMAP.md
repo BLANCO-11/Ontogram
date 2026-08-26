@@ -64,7 +64,9 @@ Decisions locked with owner:
 | 2026-08-25 | 3 | 6f5bff4 | Loopback default + ONTOGRAM_TOKEN guard; healthcheck & startup ordering; harness integration assets |
 | 2026-08-25 | T | 8e8c968 | Live e2e on OpenCode Go: fixed container-internal bind, stopped baking .env into image, load_env no longer overrides compose env; SETUP_GUIDE issue 5 added |
 | 2026-08-25 | D | 6320331 / 82e1e63 | PERFORMANCE.md (measured scaling + concurrency, six scenarios) and QUICKSTART_AGENTS.md |
-| 2026-08-25 | S | (this commit) | Auto scope resolution: ONTOGRAM_PROJECT_ID / ONTOGRAM_SESSION_ID env defaults + loud global-degradation warnings on remember/recall; verified live |
+| 2026-08-25 | S | 412ea9b | Auto scope resolution: ONTOGRAM_PROJECT_ID / ONTOGRAM_SESSION_ID env defaults + loud global-degradation warnings on remember/recall; verified live |
+| 2026-08-26 | A | 5e10442 | MemoryBackend port + adapters; ACL dialect (hard isolation, fixes silent cross-dataset recall leak); 11 offline tests |
+| 2026-08-26 | U | 605ec94+ | Core upgraded to cognee 1.5.3; volume migrated in place; UI profile live at localhost:3001 |
 
 ## Phase A — Core abstraction (ports & adapters)
 
@@ -110,15 +112,23 @@ adapter + flipping `ONTOGRAM_BACKEND_DIALECT`, nothing else changes.
 Goal: get onto a current cognee core so upstream's own frontend can be used.
 Strictly non-destructive until explicitly committed.
 
-- [ ] U1 Spike: run pinned-latest `cognee/cognee` image side-by-side on alt
-      ports with a FRESH volume; implement `CogneeLatestAdapter` against it;
-      answer: do our calls work? does storage format differ?
-- [ ] U2 Volume compatibility: copy of the real `cognee_data` volume mounted
-      into the spike container — does latest cognee read 1.4.0-written memory?
-- [ ] U3 If pass: upgrade Ontogram Dockerfile to pinned latest, flip dialect,
-      full e2e re-run on the real stack
-- [ ] U4 Frontend: bring up upstream cognee-frontend matched to the chosen
-      core pin (compose profile, loopback-bound); report UI URL
+- [x] U1 Spike: cognee **1.5.3** (`cognee/cognee:main`) on alt ports, fresh
+      volume — REST contract (remember multipart / recall `datasets[]` /
+      auth / datasets CRUD / graph) fully compatible; isolation verified
+- [x] U2 Volume compatibility: PASS with caveats
+      - latest moved default storage root to `/cognee-storage/{data,system}`;
+        point `*_ROOT_DIRECTORY` envs at the old layout to migrate in place
+      - volume files need chown 1000:1000 (1.4 ran as root, latest as `cognee`)
+      - all legacy metadata + populated stores readable; two datasets that
+        were ALREADY empty on 1.4.0 (silent-failure era) stay empty — not a
+        migration regression
+- [x] U3 Ontogram Dockerfile rebased onto `cognee/cognee:main`:
+      - base ENTRYPOINT replaced (it starts its own :8000 server)
+      - deps installed into the image's uv venv (`ensurepip` bootstrap; no pip/uv present)
+      - full MCP e2e re-run green: isolation, legacy access, forget, status
+- [x] U4 Frontend: upstream cognee-frontend vendored at `vendor/cognee-frontend`
+      (marketing videos stripped), opt-in compose profile `ui`,
+      **http://localhost:3001** (3000 was occupied), loopback-bound
 
 ## Live test results (2026-08-25, OpenCode Go / deepseek-v4-flash)
 
