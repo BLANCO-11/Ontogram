@@ -43,6 +43,20 @@ asked):
 **Hygiene:** memory compounds — prefer one dense fact per `remember` call over
 transcripts. Do not store secrets, tokens, or credentials.
 
+## Discover-or-Create (use if available else create)
+
+At session start, ensure the project's memory exists locally *and* in Ontogram — idempotent, works from any harness without MCP:
+
+    python integrations/ensure_memory.py --project-id <current-project-slug> --md-file ONTGRAM.md
+
+This checks `ONTGRAM.md` (or `docs/ONTGRAM.md`) and `deck_<project>_memory` in Ontogram:
+- both exist → merges recall hits into md
+- only Ontogram → writes md from graph
+- only md → pushes md to graph
+- neither → creates md template + seeds graph
+
+See `docs/CONNECT.md#4` and `integrations/ensure_memory.py:1` for full flow. Foundry example: `foundry/ONTGRAM.md` ↔ `deck_foundry_memory`.
+
 ## Terminal fallback (no MCP support)
 
     ./integrations/memory_bootstrap.py recall --project-id myproject

@@ -157,9 +157,33 @@ curl "http://localhost:9480/api/v1/datasets" | jq
 
 ---
 
-## 4. Make agents actually use it
+## 4. Make agents actually use it — Discover-or-Create (use if available else create)
 
-Copy `integrations/AGENTS_MEMORY.md` block into `CLAUDE.md` / `AGENTS.md` / `.cursorrules`. It tells the agent to `recall` at session start and `remember` durable facts as they happen (decisions, bug fixes, preferences).
+Agents must not assume memory exists. Use `integrations/ensure_memory.py` for idempotent "discover existing md file + Ontogram graph, or create one" — safe to run at every session start from any harness (Claude, Opencode, Cursor). No venv needed (uses `requests` or stdlib).
+
+```bash
+# discover existing ONTGRAM.md + deck_foundry_memory, or create both if neither exists
+python integrations/ensure_memory.py --project-id foundry --md-file ONTGRAM.md --api-url http://localhost:9480
+# from inside foundry/:
+python ../deployments/Ontogram/integrations/ensure_memory.py --project-id foundry --md-file ONTGRAM.md
+# custom path:
+python integrations/ensure_memory.py --project-id foundry --md-file docs/ONTGRAM.md --project-root /path/to/foundry
+```
+
+Behavior (idempotent):
+1. Checks local md file (`ONTGRAM.md`) and Ontogram `deck_foundry_memory` via `POST /api/v1/recall`
+2. `Both exist` → merges recalled hits into md file (no duplicate `remember`)
+3. `Only Ontogram` → materializes md file from recall hits (`Created ... from Ontogram`)
+4. `Only md file` → pushes md content to Ontogram (`Pushed ... to Ontogram`)
+5. `Neither` → creates md template + seeds Ontogram (`Created ... + seeded`)
+
+Verified: `foundry/ONTGRAM.md` now mirrors `deck_foundry_memory` (2.3K, synced), `testproj123` template 518B. Subsequent runs merge.
+
+Hook it into your harness so it runs automatically:
+* **Claude Code** (`.claude/settings.json` hooks or `CLAUDE.md` instruction): run `ensure_memory.py --project-id foundry` at `SessionStart`
+* **Opencode** (`opencode.json` hooks): `session_start` → `python integrations/ensure_memory.py --project-id foundry`
+
+Fallback: copy `integrations/AGENTS_MEMORY.md` block into `CLAUDE.md` / `AGENTS.md` / `.cursorrules` — it tells the agent to `recall` at session start and `remember` durable facts as they happen (decisions, bug fixes, preferences).
 
 ---
 
