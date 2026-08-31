@@ -31,6 +31,8 @@ services:
       - DATA_ROOT_DIRECTORY=/cognee-storage/data_storage
       - SYSTEM_ROOT_DIRECTORY=/cognee-storage/cognee_system
       - CACHE_ROOT_DIRECTORY=/cognee-storage/cache
+      # CORS: allow the vendored UI (moved to :3001 because :3000 was taken)
+      - CORS_ALLOWED_ORIGINS=http://localhost:3001,http://localhost:3000
     volumes:
       - cognee_data:/cognee-storage
     healthcheck:
@@ -51,7 +53,7 @@ services:
     profiles:
       - ui
     environment:
-      - NEXT_PUBLIC_BACKEND_API_URL=http://localhost:9480
+      - NEXT_PUBLIC_LOCAL_API_URL=http://localhost:9480
       - NEXT_PUBLIC_IS_CLOUD_ENVIRONMENT=false
     ports:
       - "127.0.0.1:3001:3000"
