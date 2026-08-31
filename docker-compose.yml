@@ -33,6 +33,10 @@ services:
       - CACHE_ROOT_DIRECTORY=/cognee-storage/cache
       # CORS: allow the vendored UI (moved to :3001 because :3000 was taken)
       - CORS_ALLOWED_ORIGINS=http://localhost:3001,http://localhost:3000
+      # Default project for Foundry harnesses (Claude + OMP/Opencode) when tools omit project_id:
+      # ensures both harnesses share deck_foundry_memory instead of degrading to global.
+      # Agents should still pass project_id="foundry" explicitly (see docs/CONNECT.md).
+      - ONTOGRAM_PROJECT_ID=foundry
     volumes:
       - cognee_data:/cognee-storage
     healthcheck:
