@@ -6,8 +6,11 @@ services:
     container_name: cognee_hybrid_service
     restart: unless-stopped
     ports:
-      - "9480:9480" # REST API Backend & Swagger Docs & Knowledge Graph Visualizer
-      - "9481:9481" # Memory MCP Server (streamable-http) -> http://localhost:9481/mcp
+      # Published on loopback only: memory stays on this machine. To expose on
+      # your LAN deliberately, change to "9480:9480"/"9481:9481" AND set
+      # ONTOGRAM_TOKEN in .env (the MCP bridge then requires a bearer token).
+      - "127.0.0.1:9480:9480" # REST API Backend & Swagger Docs & Knowledge Graph Visualizer
+      - "127.0.0.1:9481:9481" # Memory MCP Server (streamable-http) -> http://localhost:9481/mcp
     env_file:
       - .env
     environment:
@@ -16,14 +19,42 @@ services:
       - COGNEE_MCP_PORT=9481
       - COGNEE_MCP_TRANSPORT=http
       - COGNEE_API_URL=http://localhost:9480
-      # Persist ALL Cognee storage on the named volume. Without these, Cognee
-      # writes its databases inside the image (ephemeral) and every rebuild
-      # wipes all memory.
-      - DATA_ROOT_DIRECTORY=/root/.cognee/data_storage
-      - SYSTEM_ROOT_DIRECTORY=/root/.cognee/cognee_system
-      - CACHE_ROOT_DIRECTORY=/root/.cognee/cache
+      # Inside the container we must bind 0.0.0.0: Docker's port publishing
+      # forwards to the container's eth0, NOT its internal loopback. The
+      # actual security boundary is the host-side "127.0.0.1:" prefix on the
+      # port mappings above (plus ONTOGRAM_TOKEN when exposing beyond that).
+      - COGNEE_BIND_HOST=0.0.0.0
+      # Storage: modern cognee defaults to /cognee-storage/{data,system}; we
+      # point at our long-standing volume layout (data_storage/cognee_system)
+      # so pre-upgrade memories keep working. All three MUST sit on the volume
+      # or every rebuild wipes memory.
+      - DATA_ROOT_DIRECTORY=/cognee-storage/data_storage
+      - SYSTEM_ROOT_DIRECTORY=/cognee-storage/cognee_system
+      - CACHE_ROOT_DIRECTORY=/cognee-storage/cache
     volumes:
-      - cognee_data:/root/.cognee
+      - cognee_data:/cognee-storage
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:9480/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # Opt-in web UI (upstream cognee-frontend, vendored): `docker compose --profile ui up -d`
+  # Talks to the REST daemon directly from the browser. Loopback-bound like everything else.
+  ontogram_ui:
+    build:
+      context: ./vendor/cognee-frontend
+      dockerfile: Dockerfile
+    container_name: ontogram_ui
+    restart: unless-stopped
+    profiles:
+      - ui
+    environment:
+      - NEXT_PUBLIC_BACKEND_API_URL=http://localhost:9480
+      - NEXT_PUBLIC_IS_CLOUD_ENVIRONMENT=false
+    ports:
+      - "127.0.0.1:3001:3000"
 
 volumes:
   cognee_data:

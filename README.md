@@ -16,12 +16,12 @@
 * **Zero Core Modifications**: Ontogram is built 100% on top of native out-of-the-box Cognee storage engines (NetworkX/KuzuDB, LanceDB, SQLite) and LiteLLM adapters.
 * **Hybrid Multi-Protocol Architecture**:
   * **REST API Daemon (Port 9480)**: Single Cognee core process holding the databases — centralized connection pool preventing database locks across concurrent agents.
-  * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
+  * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, `remember_status`, `forget`, `list_datasets`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
   * **Graph Visualizer**: Served by the REST daemon at `http://localhost:9480/api/v1/visualize`. This is the only UI — Ontogram ships **no separate web frontend**; there are exactly two long-lived processes (REST daemon + MCP bridge) and two published ports.
 * **Non-Blocking Async Ingestion**: Memory ingestion (`remember`) returns **instantly in < 1 sec** (`run_in_background=True`) while building Knowledge Graphs asynchronously.
 * **LiteLLM Unified Adapter**: Connect to custom LiteLLM proxy gateways, OpenAI, Gemini, Anthropic, or local Ollama models.
 * **Local Fastembed Integration**: Local vector embeddings (`BAAI/bge-small-en-v1.5`) generated on-device with zero embedding API cost.
-* **Multi-Agent Memory Isolation**: Dynamic dataset partitioning per agent (`antigravity_memory`, `pi_memory`, `opencode_memory`, `shared-team`).
+* **Scoped Multi-Agent Memory Isolation**: Dataset partitioning by scope triple (`deck_global_memory`, `deck_<project>_memory`, `deck_<project>_<session>_memory`); legacy `<agent_id>_memory` partitions still served.
 
 ---
 
@@ -43,8 +43,10 @@
 │   ├── SETUP_GUIDE.md          # Step-by-step setup & Docker deployment guide
 │   ├── LLM_PROVIDERS.md        # LiteLLM, custom gateway, and embedding config
 │   └── AGENT_INTEGRATION.md    # Guide for Antigravity, Pi, OpenCode & Python
-└── plans/
-    └── cognee_hybrid_service_plan.md  # Original architecture plan
+├── integrations/                 # Harness auto-integration assets
+│   ├── AGENTS_MEMORY.md          # Memory protocol block for AGENTS.md / CLAUDE.md
+│   └── memory_bootstrap.py       # Session hook: recall-on-start / remember-on-end
+└── ROADMAP.md                    # Improvement roadmap tracker
 ```
 
 ---
@@ -55,7 +57,7 @@
 
 ```bash
 # Clone or navigate to directory
-cd /home/himanshu/builds/cognee
+cd Ontogram
 
 # Create your config from the template, then set LLM_API_KEY
 cp .env.example .env
@@ -88,11 +90,46 @@ Point your MCP client at the HTTP endpoint — this is the harness-agnostic path
 }
 ```
 
-See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback. Tools exposed: `remember`, `recall`, `list_agents` (each takes an `agent_id` for per-agent isolation; default `shared-team`).
+See [mcp_config_example.json](mcp_config_example.json) for a stdio fallback and bearer-token notes. Tools exposed:
+
+* `remember(text, scope, project_id, session_id, wait)` — store a fact; scoped per project (and optionally per session)
+* `recall(query, scope, project_id, session_id)` — query the scoped knowledge graph
+* `remember_status(scope, project_id, session_id)` — confirm background ingestions finished indexing
+* `forget(scope, project_id, session_id)` — delete an entire scoped dataset (coarse-grained by design)
+* `list_datasets()` — discover which datasets exist
+* `list_agents()` — list memory partitions (deck-style and legacy)
+
+Memory is partitioned by a **scope triple** instead of a flat agent id:
+
+| Scope | Dataset | `X-User-Id` |
+| :--- | :--- | :--- |
+| `global` | `deck_global_memory` | `global` |
+| `project` | `deck_<project-slug>_memory` | `<project-slug>` |
+| `session` | `deck_<project-slug>_<session-slug>_memory` | `<project-slug>` |
+
+Omitting `project_id` degrades leniently to the global dataset — agents storing
+project memory should pass `project_id` explicitly.
 
 > The MCP server key is still registered as `cognee-memory` in the shipped
 > configuration files — that identifier is wired into `.mcp.json` and client
 > configs, so Ontogram keeps it for backwards compatibility.
+
+### Make agents actually use memory
+
+Tools alone are not enough — wire the memory protocol into your harness so it
+recalls at session start and remembers durable facts as they happen:
+
+- Copy the protocol block from [integrations/AGENTS_MEMORY.md](integrations/AGENTS_MEMORY.md)
+  into your `AGENTS.md` / `CLAUDE.md` / `.cursorrules`.
+- Or use the hook script for harnesses with shell hooks:
+
+```bash
+# session start: print stored project context
+./integrations/memory_bootstrap.py recall --project-id myproject
+
+# session end / checkpoint: store a summary
+./integrations/memory_bootstrap.py remember "Decided X because Y" --project-id myproject
+```
 
 ---
 
@@ -135,9 +172,11 @@ source .venv/bin/activate
 For detailed guides, refer to the Ontogram documentation suite in `docs/`:
 
 * 🏛 **[Architecture & Memory Model](docs/ARCHITECTURE.md)**: System design, entity extraction pipelines, and multi-tenant memory partitioning.
+* ⚡ **[Agent Quickstart](docs/QUICKSTART_AGENTS.md)**: Wire opencode, pi, Claude Code, or Cursor into memory in ~5 minutes.
 * 🛠 **[Setup & Deployment Guide](docs/SETUP_GUIDE.md)**: Local setup, Docker Compose, systemd daemonization, and troubleshooting.
 * ⚙️ **[LLM & Embedding Providers](docs/LLM_PROVIDERS.md)**: LiteLLM configuration, custom gateways, local Ollama, and Fastembed setup.
 * 🔌 **[Agent Integration Guide](docs/AGENT_INTEGRATION.md)**: Configuring Antigravity (MCP), Pi, OpenCode, and custom Python agents.
+* 📊 **[Performance: With vs Without Memory](docs/PERFORMANCE.md)**: Measured service benchmarks, workflow comparison, and a reproducible A/B protocol.
 
 ---
 

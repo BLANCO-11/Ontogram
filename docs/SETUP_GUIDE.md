@@ -17,7 +17,7 @@ variable configuration, and troubleshooting for **Ontogram** (based on Cognee co
 
 ### Building and Running Ontogram Services
 ```bash
-cd /home/himanshu/builds/cognee
+cd Ontogram
 
 # Create your runtime config from the documented template
 cp .env.example .env
@@ -34,7 +34,9 @@ docker compose ps
 ```
 
 This brings up a **single container** (`cognee_hybrid_service`) running both
-Ontogram processes and publishing two ports:
+Ontogram processes and publishing two ports **on loopback only** (memory stays
+on this machine; edit the compose port mappings and set `ONTOGRAM_TOKEN` to
+expose deliberately):
 
 | URL | What it is |
 | :--- | :--- |
@@ -63,7 +65,7 @@ docker compose down -v       # also DELETES the cognee_data volume (all memory)
 ### Installation Steps
 ```bash
 # 1. Navigate to directory
-cd /home/himanshu/builds/cognee
+cd Ontogram
 
 # 2. Activate Python virtual environment
 source .venv/bin/activate
@@ -110,6 +112,13 @@ is the file that gets committed and shared.
 | `COGNEE_MCP_TRANSPORT` | `http` | MCP transport (`http`, `sse`, `stdio`) |
 | `COGNEE_API_URL` | `http://localhost:9480` | REST daemon base URL used by the MCP bridge |
 | `COGNEE_SKIP_CONNECTION_TEST` | `true` | Skip startup connection timeout check |
+| `COGNEE_BIND_HOST` | `127.0.0.1` | Bind host for both processes (local mode). Set `0.0.0.0` deliberately to serve beyond localhost. |
+| `ONTOGRAM_TOKEN` | *(unset)* | Optional bearer token. When set, the MCP bridge rejects requests without `Authorization: Bearer <token>`. Strongly recommended whenever ports are exposed beyond loopback. |
+| `ENABLE_BACKEND_ACCESS_CONTROL` | `true` | **Keep on.** Enables cognee multi-tenant mode so each scope identity gets physically separate graph/vector storage — this is what enforces agent/project memory isolation. Turning it off silently degrades boundaries to labels. |
+| `ONTOGRAM_IDP_SECRET` | auto-generated | Secret used to derive per-project identity passwords (stable across restarts). Auto-generated and persisted next to cognee storage if unset; set it explicitly in multi-node setups. |
+| `DEFAULT_USER_EMAIL` / `DEFAULT_USER_PASSWORD` | cognee defaults | Credentials of the daemon's default (superuser) identity. Ontogram maps the `global` scope and all pre-ACL legacy memories to it. |
+| `ONTOGRAM_PROJECT_ID` | *(unset)* | Default project slug for the bridge's tools, so agents get correct project boundaries without passing `project_id` on every call (harnesses set this per launch). |
+| `ONTOGRAM_SESSION_ID` | *(unset)* | Default session id used when a tool call uses `scope="session"` without one. |
 | `DATA_ROOT_DIRECTORY` | `/root/.cognee/data_storage` | Ingested data location — **must** sit on the volume |
 | `SYSTEM_ROOT_DIRECTORY` | `/root/.cognee/cognee_system` | Graph/vector/relational DB location — **must** sit on the volume |
 | `CACHE_ROOT_DIRECTORY` | `/root/.cognee/cache` | Cache location — **must** sit on the volume |
@@ -127,6 +136,21 @@ is the file that gets committed and shared.
 > [!NOTE]
 > `COGNEE_FRONTEND_PORT` may still be present in your `.env`. It is a leftover
 > from the removed web dashboard and is read by nothing — safe to delete.
+
+### Security model
+
+By default everything binds to loopback (`COGNEE_BIND_HOST=127.0.0.1`) and
+Docker publishes ports on `127.0.0.1` only, so your memory is reachable solely
+from this machine. To serve other machines on your LAN:
+
+1. Set `ONTOGRAM_TOKEN=<random-secret>` in `.env` — the MCP bridge then
+   requires an `Authorization: Bearer <token>` header on every request.
+2. Change the compose port mappings to `"9480:9480"` / `"9481:9481"` (or set
+   `COGNEE_BIND_HOST=0.0.0.0` when running without Docker).
+
+Note the REST daemon itself is stock Cognee and has no token support; only the
+MCP bridge enforces `ONTOGRAM_TOKEN`, so prefer agent traffic over MCP when
+exposed.
 
 ---
 
@@ -151,7 +175,13 @@ is the file that gets committed and shared.
   `docker-compose.yml`), then verify the volume is populated:
   `docker compose exec cognee_hybrid_service ls -la /root/.cognee`.
 
-### Issue 5: Looking for the web dashboard / a frontend port
+### Issue 5: Changed `.env` but the container still uses old values
+- **Cause**: `docker compose up -d` does not recreate a running container when
+  only the *contents* of `.env` change (e.g. a new `LLM_API_KEY`).
+- **Fix**: `docker compose up -d --force-recreate`. Verify with:
+  `docker compose exec cognee_hybrid_service printenv LLM_API_KEY`.
+
+### Issue 6: Looking for the web dashboard / a frontend port
 - **Cause**: The Next.js dashboard from the original design was removed.
 - **Fix**: Nothing to start. Use `http://localhost:9480/api/v1/visualize` for the
   knowledge graph and `http://localhost:9480/docs` for the API. Any lingering

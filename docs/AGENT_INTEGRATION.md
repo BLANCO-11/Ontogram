@@ -11,7 +11,44 @@ based on Cognee core.
 The Ontogram MCP server is **harness/agent-agnostic**: it runs as a long-lived
 streamable-HTTP endpoint, so every MCP client connects the same way — by URL.
 No per-agent process, no local venv required. Tools exposed: `remember`,
-`recall`, `list_agents`.
+`recall`, `remember_status`, `forget`, `list_datasets`, `list_agents`.
+
+### Scoped memory contract
+
+`remember` and `recall` take a **scope triple** rather than a flat agent id:
+
+| Scope | Dataset written/searched | Notes |
+| :--- | :--- | :--- |
+| `"global"` | `deck_global_memory` | Shared across all projects |
+| `"project"` | `deck_<project-slug>_memory` | Pass `project_id` (slug) |
+| `"session"` | `deck_<project-slug>_<session-slug>_memory` | Pass `project_id` **and** `session_id` |
+
+Missing ids degrade leniently toward global, so always pass `project_id`
+explicitly for project or session memory.
+
+```json
+// remember: store a project-scoped fact
+{ "text": "We chose SQLite over Postgres for the edge build",
+  "scope": "project", "project_id": "ontogram" }
+
+// recall: search that same scope
+{ "query": "which database did we choose?", "scope": "project", "project_id": "ontogram" }
+```
+
+### Closing the async loop
+
+`remember` returns as soon as the daemon accepts the write; cognify (graph
+building) continues in the background. To confirm indexing finished, call
+`remember_status` with the same scope triple — it reports `indexing`, `ready`,
+or `timeout` for recent jobs. When guaranteed indexing matters more than speed,
+pass `wait=true` to `remember`.
+
+### Forgetting memory
+
+`forget(scope, project_id, session_id)` deletes an **entire** scoped dataset.
+It deliberately refuses lenient fallbacks: session scope without ids or project
+scope without `project_id` is rejected rather than silently deleting the global
+dataset. There is no fact-level deletion — re-remember what should be kept.
 
 ### Registration (recommended — HTTP)
 Add this block to your agent's MCP configuration. The server key stays
@@ -37,16 +74,18 @@ local `.venv` on the same machine):
 {
   "mcpServers": {
     "cognee-memory": {
-      "command": "/home/himanshu/builds/cognee/.venv/bin/python",
-      "args": ["/home/himanshu/builds/cognee/cognee_mcp_server.py", "--transport", "stdio"],
+      "command": "/path/to/Ontogram/.venv/bin/python",
+      "args": ["/path/to/Ontogram/cognee_mcp_server.py", "--transport", "stdio"],
       "env": { "COGNEE_API_URL": "http://localhost:9480" }
     }
   }
 }
 ```
 
-> Each tool takes an optional `agent_id` for per-agent memory isolation
-> (dataset `<agent_id>_memory`); omit it to use the shared `shared-team` pool.
+> [!NOTE]
+> The `agent_client.py` helper (below) predates the scoped-memory contract and
+> still targets legacy `<user_id>_memory` datasets. Prefer the MCP tools with
+> the scope triple for new integrations.
 
 ---
 

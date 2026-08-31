@@ -1,5 +1,5 @@
 {
-  "_comment": "Cognee agent-agnostic Memory MCP. Prefer the HTTP entry: it works with ANY MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, ...) by pointing at one URL, no local process needed. The stdio entry is a fallback for clients that spawn a subprocess instead of connecting to a URL; it requires the local .venv on the same machine.",
+  "_comment": "Ontogram Memory MCP. Prefer the HTTP entry: it works with ANY MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, ...) by pointing at one URL, no local process needed. If ONTOGRAM_TOKEN is set on the bridge, add an 'Authorization': 'Bearer <token>' header entry per your client's header support. The stdio entry is a fallback for clients that spawn a subprocess instead of connecting to a URL; it requires the local .venv on the same machine.",
 
   "mcpServers": {
     "cognee-memory": {
@@ -8,9 +8,9 @@
     },
 
     "cognee-memory-stdio": {
-      "command": "/home/user/builds/cognee/.venv/bin/python",
+      "command": "/path/to/Ontogram/.venv/bin/python",
       "args": [
-        "/home/himanshu/builds/cognee/cognee_mcp_server.py",
+        "/path/to/Ontogram/cognee_mcp_server.py",
         "--transport",
         "stdio"
       ],
