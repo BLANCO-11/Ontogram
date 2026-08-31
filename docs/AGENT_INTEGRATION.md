@@ -89,6 +89,60 @@ local `.venv` on the same machine):
 
 ---
 
+## 1b. Foundry Project — Claude + OMP (Opencode) Harness
+
+Foundry (`/builds/foundry`) is wired to Ontogram for both harnesses via the same MCP bridge. IPs differ by runtime location:
+
+* **Host agents (Claude Code, Opencode TUI, Cursor on host):** `http://localhost:9481/mcp` — Ontogram publishes `127.0.0.1:9481` (`docker-compose.yml:12`).
+* **Dockerized Foundry server (`infra/docker-compose.yml:112`):** `http://host.docker.internal:9481/mcp` — host gateway from inside compose.
+
+### Claude Code (foundry)
+
+`foundry/.mcp.json` (project-level, auto-discovered by Claude Code):
+```json
+{
+  "mcpServers": {
+    "cognee-memory": { "type": "http", "url": "http://localhost:9481/mcp" },
+    "cognee-memory-docker": { "type": "http", "url": "http://host.docker.internal:9481/mcp" }
+  }
+}
+```
+`.claude/settings.json` keeps the spec-gate hook; no change needed beyond `.mcp.json`. Verify:
+```bash
+curl -fsS http://localhost:9481/mcp | head  # 406 expected (MCP handshake)
+curl -fsS http://localhost:9480/docs | head # 200
+```
+
+### OMP / Opencode Harness (foundry)
+
+Opencode reads `opencode.jsonc` (project or `~/.config/opencode/opencode.jsonc`). Add the same servers:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcpServers": {
+    "cognee-memory": { "type": "http", "url": "http://localhost:9481/mcp" }
+  }
+}
+```
+For containers, use `host.docker.internal` as above. Tools are identical: `remember`/`recall` with `scope`/`project_id` (`foundry` for this repo):
+```json
+{ "text": "Foundry uses Postgres :5433 + Kestra :8080", "scope": "project", "project_id": "foundry" }
+```
+
+### Make agents actually use memory (both harnesses)
+
+Copy `integrations/AGENTS_MEMORY.md` block into `foundry/CLAUDE.md` and `foundry/AGENTS.md` (both already exist — paste under your harness instructions). Optionally wire `memory_bootstrap.py` into session hooks:
+```bash
+# recall at session start
+./integrations/memory_bootstrap.py recall --project-id foundry
+# remember at checkpoint
+./integrations/memory_bootstrap.py remember "Decided X because Y" --project-id foundry
+```
+Project scoping: `foundry` → `deck_foundry_memory`; `foundry:<session>` → `deck_foundry_<session>_memory`.
+
+---
+
 ## 2. Pi / OpenCode / Terminal CLI Integration
 
 For terminal scripts or agents that support HTTP or CLI execution:

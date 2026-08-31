@@ -21,6 +21,34 @@ LLM_API_KEY="sk-your-gateway-key"
 > [!IMPORTANT]
 > Always prefix model names with `openai/` when targeting an OpenAI-compatible base URL endpoint so LiteLLM correctly routes request payloads.
 
+### 1a. opencode-go as LLM provisioner (any inference provider, no LiteLLM proxy)
+
+Ontogram now supports any OpenAI-compatible inference provider direct — no LiteLLM gateway required. For **opencode-go** ($10/mo, `https://opencode.ai/docs/go`, `https://opencode.ai/go`), point Ontogram at Go's base URL. The provisioner is still `openai` — opencode-go is not a separate LiteLLM provider string. Cognee internally still uses the LiteLLM *library*, but any OpenAI-compatible `api_base` works.
+
+**Endpoints** (`https://opencode.ai/docs/go#endpoints`):
+* `https://opencode.ai/zen/go/v1/chat/completions` — `deepseek-v4-flash`, `glm-5.x`, `kimi-k3`, `mimo-v2.5` (`@ai-sdk/openai-compatible`)
+* `https://opencode.ai/zen/go/v1/responses` — `muse-spark-1.2-contributor`, `grok-4.6`, `gpt-5.6-luna` (`@ai-sdk/openai`) — direct `curl` only; Cognee's LiteLLM chat path uses `/chat/completions`
+* `https://opencode.ai/zen/go/v1/messages` — `qwen3.6-plus`, `minimax-m3` (`@ai-sdk/anthropic`)
+* Catalog: `https://opencode.ai/zen/go/v1/models` — config id is `opencode-go/<model>`, REST uses bare `deepseek-v4-flash`
+
+```env
+# Provisioner: opencode-go — chat-compatible example (verified)
+LLM_PROVIDER="openai"
+LLM_MODEL="openai/deepseek-v4-flash"
+LLM_ENDPOINT="https://opencode.ai/zen/go/v1"  # base only; LiteLLM appends /chat/completions → https://opencode.ai/zen/go/v1/chat/completions
+LLM_API_KEY="sk-..."  # OPENCODE_API_KEY from https://opencode.ai/auth (same as Zen, billed to Go)
+# For muse-spark direct API: LLM_ENDPOINT="https://opencode.ai/zen/go/v1/responses" + model "muse-spark-1.2-contributor" via curl (not via Cognee chat)
+```
+
+Verified (`manage_llm.py` now does direct OpenAI-compatible test first, LiteLLM fallback second):
+```bash
+docker compose exec cognee_hybrid_service python /app/manage_llm.py --status  # shows opencode-go base
+docker compose exec cognee_hybrid_service python /app/manage_llm.py --test    # direct 200, curl also 200; muse-spark chat 500, responses 200
+# direct curl checks:
+curl -H "Authorization: Bearer $KEY" https://opencode.ai/zen/go/v1/chat/completions -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"ping"}]}'
+curl -H "Authorization: Bearer $KEY" https://opencode.ai/zen/go/v1/responses -d '{"model":"muse-spark-1.2-contributor","input":"ping"}'
+```
+
 ---
 
 ## 2. OpenAI / Anthropic / Gemini Cloud Direct

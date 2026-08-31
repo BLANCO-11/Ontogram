@@ -19,9 +19,10 @@
   * **Ontogram MCP Bridge (Port 9481, streamable-HTTP)**: Harness/agent-agnostic MCP server exposing `remember`, `recall`, `remember_status`, `forget`, `list_datasets`, and `list_agents` tools. Any MCP client (Claude Code, Antigravity, Pi, OpenCode, Cursor, …) connects at `http://localhost:9481/mcp`. It proxies to the REST daemon, so there is still only one Cognee core process.
   * **Graph Visualizer**: Served by the REST daemon at `http://localhost:9480/api/v1/visualize`. This is the only UI — Ontogram ships **no separate web frontend**; there are exactly two long-lived processes (REST daemon + MCP bridge) and two published ports.
 * **Non-Blocking Async Ingestion**: Memory ingestion (`remember`) returns **instantly in < 1 sec** (`run_in_background=True`) while building Knowledge Graphs asynchronously.
-* **LiteLLM Unified Adapter**: Connect to custom LiteLLM proxy gateways, OpenAI, Gemini, Anthropic, or local Ollama models.
+* **Direct OpenAI-Compatible Adapter (any inference provider)**: No LiteLLM proxy required — works with `opencode-go` (`https://opencode.ai/zen/go/v1` → `deepseek-v4-flash`, `muse-spark-1.2-contributor` via `https://opencode.ai/zen/go/v1/responses`), OpenAI, Gemini, Anthropic, or local Ollama. Cognee still uses LiteLLM library internally but any `https://.../v1` base works.
 * **Local Fastembed Integration**: Local vector embeddings (`BAAI/bge-small-en-v1.5`) generated on-device with zero embedding API cost.
 * **Scoped Multi-Agent Memory Isolation**: Dataset partitioning by scope triple (`deck_global_memory`, `deck_<project>_memory`, `deck_<project>_<session>_memory`); legacy `<agent_id>_memory` partitions still served.
+* **Foundry Wiring**: `foundry/.mcp.json` exposes `http://localhost:9481/mcp` (host) + `http://host.docker.internal:9481/mcp` (docker) for Claude + OMP/Opencode harnesses — project `foundry` → `deck_foundry_memory`.
 
 ---
 

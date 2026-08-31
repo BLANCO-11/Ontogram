@@ -68,17 +68,69 @@ def save_env_dict(path: Path, updates: dict):
 
 def print_status():
     env_vars = load_env_dict(ENV_PATH)
-    print("\n--- Cognee LiteLLM Provider Status ---")
-    print(f"  LLM Provider      : {env_vars.get('LLM_PROVIDER', 'not set')}")
+    print("\n--- Ontogram Provider Status (any OpenAI-compatible inference provider) ---")
+    print(f"  LLM Provider      : {env_vars.get('LLM_PROVIDER', 'not set')}  (openai = any OpenAI-compatible, incl. opencode-go)")
     print(f"  LLM Model         : {env_vars.get('LLM_MODEL', 'not set')}")
-    print(f"  LLM Endpoint      : {env_vars.get('LLM_ENDPOINT') or '[Default Cloud Direct]'}")
+    print(f"  LLM Endpoint      : {env_vars.get('LLM_ENDPOINT') or '[Default Cloud Direct: https://api.openai.com/v1]'}")
     print(f"  LLM API Key       : {'[Set]' if env_vars.get('LLM_API_KEY') and env_vars.get('LLM_API_KEY') != 'YOUR_API_KEY_HERE' else '[Not set / Default placeholder]'}")
     print(f"  Embedding Provider: {env_vars.get('EMBEDDING_PROVIDER', 'not set')}")
     print(f"  Embedding Model   : {env_vars.get('EMBEDDING_MODEL', 'not set')}")
     print(f"  Embedding Endpoint: {env_vars.get('EMBEDDING_ENDPOINT') or '[Default]'}")
     print(f"  Backend Port      : {env_vars.get('COGNEE_BACKEND_PORT', '8000')}")
     print(f"  Dashboard Port    : {env_vars.get('COGNEE_FRONTEND_PORT', '3000')}")
+    print("  Note: Cognee internally uses LiteLLM library, but any OpenAI-compatible base URL works (opencode-go, OpenAI, etc.)")
     print("--------------------------------------\n")
+
+def _strip_provider_prefix(model: str) -> str:
+    """Any inference provider: strip litellm provider prefix (openai/, anthropic/) for raw OpenAI API."""
+    if "/" in model:
+        return model.split("/", 1)[1]
+    return model
+
+def test_direct_openai(model: str, api_key: str, endpoint: str = None):
+    """Direct OpenAI-compatible test without LiteLLM — works with any inference provider (opencode-go, OpenAI, etc.)."""
+    bare_model = _strip_provider_prefix(model)
+    # endpoint is base like https://opencode.ai/zen/go/v1 ; append /chat/completions if needed
+    if endpoint:
+        base = endpoint.rstrip("/")
+        if base.endswith("/chat/completions"):
+            url = base
+        elif base.endswith("/responses"):
+            # muse-spark style — direct responses API
+            url = base
+        else:
+            url = base + "/chat/completions"
+    else:
+        url = "https://api.openai.com/v1/chat/completions"
+    print(f"Testing Direct OpenAI-compatible connection: '{bare_model}' -> {url}")
+    try:
+        import requests
+        headers = {"Content-Type": "application/json"}
+        if api_key and api_key != "YOUR_API_KEY_HERE":
+            headers["Authorization"] = f"Bearer {api_key}"
+        # responses vs chat payload
+        if url.endswith("/responses"):
+            payload = {"model": bare_model, "input": "Ping test for Ontogram direct connection."}
+        else:
+            payload = {"model": bare_model, "messages": [{"role": "user", "content": "Ping test for Ontogram direct connection."}], "max_tokens": 32}
+        r = requests.post(url, headers=headers, json=payload, timeout=30)
+        if r.status_code != 200:
+            print(f"\n❌ Direct connection failed: HTTP {r.status_code}: {r.text[:600]}\n")
+            return False
+        data = r.json()
+        # extract content for both APIs
+        content = ""
+        if "choices" in data and data["choices"]:
+            content = data["choices"][0].get("message", {}).get("content", "") or data["choices"][0].get("text", "")
+        elif "output" in data:
+            # responses API
+            content = str(data["output"][:1])
+        print(f"\n✓ Direct Connection Successful!")
+        print(f"Response: {str(content).strip()[:500]}\n")
+        return True
+    except Exception as e:
+        print(f"\n❌ Direct connection failed: {e}\n")
+        return False
 
 def test_litellm_connection(model: str, api_key: str, endpoint: str = None):
     print(f"Testing LiteLLM model connection: '{model}' (Endpoint: {endpoint or 'default'})...")
@@ -93,12 +145,20 @@ def test_litellm_connection(model: str, api_key: str, endpoint: str = None):
             kwargs["custom_llm_provider"] = "openai"
         response = litellm.completion(**kwargs)
         content = response.choices[0].message.content
-        print(f"\n✓ Connection Successful!")
+        print(f"\n✓ LiteLLM Connection Successful!")
         print(f"Response: {content.strip()}\n")
         return True
     except Exception as e:
-        print(f"\n❌ Connection failed: {e}\n")
+        print(f"\n❌ LiteLLM connection failed: {e}\n")
         return False
+
+def test_connection(model: str, api_key: str, endpoint: str = None):
+    """Provider-agnostic: try direct OpenAI-compatible first, fall back to LiteLLM if needed. Any inference provider works."""
+    ok = test_direct_openai(model, api_key, endpoint=endpoint)
+    if ok:
+        return True
+    print("Direct test failed, trying LiteLLM fallback (Cognee's internal path)...")
+    return test_litellm_connection(model, api_key, endpoint=endpoint)
 
 def main():
     parser = argparse.ArgumentParser(description="Manage Cognee LLM Providers & Settings")
@@ -135,7 +195,7 @@ def main():
         model = env_vars.get("LLM_MODEL", "gemini/gemini-2.5-flash")
         key = env_vars.get("LLM_API_KEY", "")
         endpoint = env_vars.get("LLM_ENDPOINT", "")
-        test_litellm_connection(model, key, endpoint=endpoint)
+        test_connection(model, key, endpoint=endpoint)
     elif not updates or args.status:
         print_status()
 
