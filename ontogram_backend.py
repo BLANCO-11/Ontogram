@@ -167,7 +167,7 @@ class Cognee14xAdapter(_BaseRESTAdapter):
                 hits.append(RecallHit(text=t, raw=item))
         return hits
 
-    async def list_datasets(self) -> list[DatasetInfo]:
+    async def list_datasets(self, user_id: Optional[str] = None) -> list[DatasetInfo]:
         try:
             async with self._client() as c:
                 r = await c.get(f"{self.base_url}/api/v1/datasets", headers=_headers("", self.token))
